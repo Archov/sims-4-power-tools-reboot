@@ -1,9 +1,8 @@
 ---
-trigger: model_decision
 description: Writing Typescript
-globs: *.js, *.ts
+globs: *.js,*.ts
+alwaysApply: false
 ---
-
 # General Code Style & Formatting
 - Use English for all code and documentation.
 - Always declare the type of each variable and function (parameters and return value).

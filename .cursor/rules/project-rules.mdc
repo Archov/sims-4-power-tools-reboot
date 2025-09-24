@@ -1,5 +1,7 @@
 ---
-trigger: always_on
+description: project wide rules
+globs:
+alwaysApply: true
 ---
 
 # Project Delivery Rules
