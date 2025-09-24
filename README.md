@@ -23,6 +23,7 @@ npm install
 - **Compile**: Execute `npm run build`; verify `dist/` exists.
 - **Type checking**: Run `npm run typecheck`; ensure it exits cleanly.
 - **Placeholder tests**: Run `npm run test`; observe output (even if minimal initially).
+- **DBPF round-trip validation**: Run `node scripts/round-trip-test.js --input test-packages/Grafton.package` and confirm all checks pass.
 - **Docs review**: Confirm this README remains up-to-date with observed behavior.
 
 ## Project Structure
