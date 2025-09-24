@@ -112,7 +112,7 @@ async function testPackage(inputPath, outputBase, inputStats) {
   const headerMatch = original.header.equals(regenerated.header);
   const resourceCountMatch = original.resources.length === regenerated.resources.length;
   const compressionFlagsMatch = regenerated.resources.every((resource, index) => resource.compressionFlags === original.resources[index].compressionFlags);
-  const dataHashMatch = sha256(original.resources.map(resource => resource.rawData).reduce((acc, buffer) => Buffer.concat([acc, buffer]), Buffer.alloc(0))) === sha256(regenerated.resources.map(resource => resource.rawData).reduce((acc, buffer) => Buffer.concat([acc, buffer]), Buffer.alloc(0)));
+  const dataHashMatch = original.resources.reduce((hash, r) => hash.update(r.rawData), createHash('sha256')).digest('hex') === regenerated.resources.reduce((hash, r) => hash.update(r.rawData), createHash('sha256')).digest('hex');
   const fileHashMatch = original.sha256 === regenerated.sha256;
 
   console.log('\n[round-trip-test] Results:');
@@ -127,15 +127,19 @@ async function testPackage(inputPath, outputBase, inputStats) {
 
   if (headerMatch && fileHashMatch && dataIntegrityOK) {
     console.log('[round-trip-test] ✅ PERFECT ROUND-TRIP: Byte-identical reproduction');
+    return 'perfect';
   } else if (!headerMatch && dataIntegrityOK) {
     console.log('[round-trip-test] 🔧 METADATA CORRECTED: Invalid metadata fixed, data integrity preserved');
     console.log(`[round-trip-test] Output package retained at ${outputPath} for inspection.`);
+    return 'corrected';
   } else if (!dataIntegrityOK) {
-    fail('❌ DATA INTEGRITY FAILURE: Resource data corrupted during processing');
+    console.log('❌ DATA INTEGRITY FAILURE: Resource data corrupted during processing');
     console.log(`[round-trip-test] Output package retained at ${outputPath} for inspection.`);
+    return 'failure';
   } else {
-    fail('❓ UNEXPECTED RESULT: Check test logic');
+    console.log('❓ UNEXPECTED RESULT: Check test logic');
     console.log(`[round-trip-test] Output package retained at ${outputPath} for inspection.`);
+    return 'failure';
   }
 }
 
@@ -169,7 +173,11 @@ async function main() {
   for (const packageFile of packageFiles) {
     try {
       console.log(`Testing ${basename(packageFile)}...`);
-      await testPackage(packageFile, outputPath, inputStats);
+      const result = await testPackage(packageFile, outputPath, inputStats);
+
+      if (result === 'perfect') successCount++;
+      else if (result === 'corrected') correctionCount++;
+      else if (result === 'failure') failureCount++;
 
     } catch (error) {
       console.error(`Failed to test ${basename(packageFile)}: ${error.message}`);
@@ -179,7 +187,10 @@ async function main() {
   }
 
   if (inputStats.isDirectory()) {
-    console.log(`[round-trip-test] Completed testing ${packageFiles.length} package files.`);
+    console.log(`[round-trip-test] Summary: ${successCount} perfect, ${correctionCount} corrected, ${failureCount} failed out of ${packageFiles.length} package files.`);
+    if (failureCount > 0) {
+      process.exitCode = 1;
+    }
   }
 }
 

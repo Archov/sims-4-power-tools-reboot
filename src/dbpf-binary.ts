@@ -82,6 +82,12 @@ function parseResource(buffer: Buffer, entryOffset: number, dataStartOffset: num
   const actualSize: number = sizeField & 0x7fffffff;
   const dataOffsetEncoded: boolean = (dataOffsetField & 0x80000000) !== 0;
   const dataOffset: number = dataOffsetEncoded ? (dataOffsetField & 0x7fffffff) + dataStartOffset : dataOffsetField;
+
+  // Bounds checking - ensure resource data doesn't extend past file end
+  if (dataOffset + actualSize > buffer.length) {
+    throw new DbpfBinaryError(`Resource data extends beyond file bounds: offset=${dataOffset}, size=${actualSize}, fileSize=${buffer.length}`);
+  }
+
   const rawData: Buffer = buffer.subarray(dataOffset, dataOffset + actualSize);
   const indexEntry: Buffer = readIndexEntry(buffer, entryOffset);
   const tgi: Tgi = { type, group, instance: toInstance(instanceHigh, instanceLow) };
@@ -137,14 +143,6 @@ function buildStructure(buffer: Buffer, filePath: string): DbpfBinaryStructure {
     indexFlags: updatedMetadata.indexFlags,
     dataStartOffset: updatedMetadata.dataStartOffset
   };
-}
-
-function calculateTotalSize(structure: DbpfBinaryStructure): number {
-  return structure.totalSize;
-}
-
-function copyHeader(header: Buffer, target: Buffer): void {
-  header.copy(target, 0);
 }
 
 function writeResources(buffer: Buffer, resources: BinaryResource[]): void {
@@ -203,24 +201,6 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number): Buf
   return buffer;
 }
 
-function writeIndexTable(buffer: Buffer, indexOffset: number, indexTable: Buffer): void {
-  indexTable.copy(buffer, indexOffset);
-}
-
-function updateHeaderForWrite(buffer: Buffer, structure: DbpfBinaryStructure): void {
-  // Copy the original header
-  buffer.set(structure.header.subarray(0, HEADER_SIZE), 0);
-
-  // Update entry count in header (0x24)
-  buffer.writeUInt32LE(structure.resources.length, INDEX_ENTRY_COUNT_OFFSET);
-
-  // Update index size in header (0x2C) - 4 bytes flags + 32 bytes per entry
-  const newIndexSize = 4 + structure.resources.length * INDEX_ENTRY_SIZE;
-  buffer.writeUInt32LE(newIndexSize, INDEX_SIZE_OFFSET);
-
-  // Update index offset in header (0x40/0x44) - should be right after data
-  // For now, keep the original offset, but this might need adjustment
-}
 
 export class DbpfBinary {
   static readonly Error: typeof DbpfBinaryError = DbpfBinaryError;
@@ -246,9 +226,10 @@ export class DbpfBinary {
     }
 
     // Calculate new total size
-    const dataEnd = structure.resources.length > 0 ?
-      Math.max(...structure.resources.map(r => r.offset + r.size)) :
-      structure.dataStartOffset;
+    const dataEnd = structure.resources.reduce(
+      (maxOffset, r) => Math.max(maxOffset, r.offset + r.size),
+      structure.dataStartOffset
+    );
     const newIndexOffset = dataEnd;
     const newTotalSize = newIndexOffset + indexTableToUse.length;
 
