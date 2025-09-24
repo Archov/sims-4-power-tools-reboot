@@ -1,0 +1,28 @@
+{
+  "name": "sims-4-power-tools-reboot",
+  "version": "0.1.0",
+  "description": "Byte-perfect Sims 4 package merge/unmerge tooling with manual validation focus.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts",
+    "test": "vitest"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@s4tk/models": "^0.6.14",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@typescript-eslint/eslint-plugin": "^8.2.0",
+    "@typescript-eslint/parser": "^8.2.0",
+    "eslint": "^9.7.0",
+    "typescript": "^5.4.5",
+    "vitest": "^3.2.4"
+  }
+}
