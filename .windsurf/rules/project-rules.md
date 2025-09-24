@@ -1,0 +1,25 @@
+---
+trigger: always_on
+---
+
+# Project Delivery Rules
+
+## Focus on Functional Delivery
+- **Ship working code first.** Prioritize implementing core functionality that can be exercised manually before investing in exhaustive automated coverage.
+- **Favor pragmatic solutions.** Choose straightforward implementations that unblock feature progress, even if further refinement could happen later.
+- **Document limitations.** If something is intentionally deferred (tests, optimizations), note it clearly for future follow-up.
+
+## Manual Validation Mindset
+- **Design for QA-by-hand.** Structure outputs so a user can run commands or interact with the feature without reading code internals.
+- **Surface observable behaviors.** Provide logging, descriptive CLI output, or temporary diagnostics to make manual checks simple.
+- **List validation steps.** After completing each task, include a short checklist of manual actions the user can follow to confirm the feature works.
+
+## Testing Expectations
+- **Defer exhaustive automation.** Do not block progress on comprehensive unit or integration tests unless they are explicitly required for the task.
+- **Add smoke checks only when trivial.** Lightweight tests are acceptable if they come at negligible cost and improve confidence.
+- **Capture test debt.** When skipping tests, leave a note or TODO so future work can close the gap.
+
+## Communication Guidelines
+- **Summarize outcomes.** Clearly state what was implemented and any caveats the user should know.
+- **Highlight manual QA steps.** Present validation instructions using ordered or unordered lists with explicit commands or interactions.
+- **Be concise and actionable.** Keep explanations short, focusing on what the user needs to execute.
