@@ -11,7 +11,7 @@ import { BinaryResource } from './types/binary-resource.js';
 import { DbpfBinaryStructure } from './types/dbpf-binary-structure.js';
 import { DbpfBinary } from './dbpf-binary.js';
 import { Tgi } from './types/tgi.js';
-import { ResourceInfo, OriginalPackageInfo, MergeMetadata, MetadataError } from './types/metadata.js';
+import { ResourceInfo, OriginalPackageInfo, MergeMetadata, MetadataError, PackageValidationInfo } from './types/metadata.js';
 
 /**
  * Load a package file and extract its metadata using S4TK validation and DBPF binary access.
@@ -33,7 +33,7 @@ export async function collectPackageMetadata(filePath: string): Promise<Original
         instance: resource.tgi.instance, // Keep as bigint for internal use
       },
       rawDataHash: DbpfBinary.hashResourceData({ resourceData: resource.rawData }),
-      originalOffset: resource.offset,
+      originalOffset: resource.originalOffset,
       compressionFlags: resource.compressionFlags,
     }));
 
@@ -45,6 +45,7 @@ export async function collectPackageMetadata(filePath: string): Promise<Original
       sha256: structure.sha256,
       headerBytes,
       resources,
+      totalSize: structure.totalSize,
     };
   } catch (error) {
     throw new MetadataError(
@@ -62,21 +63,17 @@ export async function collectPackageMetadata(filePath: string): Promise<Original
  * @throws MetadataError if any package cannot be processed
  */
 export async function collectPackagesMetadata(filePaths: readonly string[]): Promise<OriginalPackageInfo[]> {
-  const results: OriginalPackageInfo[] = [];
-
-  for (const filePath of filePaths) {
-    try {
-      const metadata = await collectPackageMetadata(filePath);
-      results.push(metadata);
-    } catch (error) {
+  const promises = filePaths.map(filePath =>
+    collectPackageMetadata(filePath).catch(error => {
+      // Re-throw a more specific error to identify which file failed.
       throw new MetadataError(
         `Failed to process package "${filePath}": ${error instanceof Error ? error.message : String(error)}`,
         error
       );
-    }
-  }
+    })
+  );
 
-  return results;
+  return Promise.all(promises);
 }
 
 /**
@@ -127,12 +124,7 @@ export async function extractResourceData(
  * @returns Validation result with basic package information
  * @throws MetadataError if validation fails
  */
-export async function validatePackage(filePath: string): Promise<{
-  filename: string;
-  sha256: string;
-  resourceCount: number;
-  totalSize: number;
-}> {
+export async function validatePackage(filePath: string): Promise<PackageValidationInfo> {
   try {
     const structure = await DbpfBinary.read({ filePath });
 

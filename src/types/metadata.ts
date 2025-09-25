@@ -29,6 +29,8 @@ export interface OriginalPackageInfo {
   readonly headerBytes: string;
   /** Array of all resources in the package. */
   readonly resources: readonly ResourceInfo[];
+  /** Total size of the original package file in bytes. */
+  readonly totalSize: number;
 }
 
 /**
@@ -41,6 +43,20 @@ export interface MergeMetadata {
   readonly originalPackages: readonly OriginalPackageInfo[];
   /** ISO timestamp when the merge operation was performed. */
   readonly mergedAt: string;
+}
+
+/**
+ * Validation result for a package file.
+ */
+export interface PackageValidationInfo {
+  /** Original filename of the package. */
+  readonly filename: string;
+  /** SHA256 hash of the entire package file. */
+  readonly sha256: string;
+  /** Number of resources in the package. */
+  readonly resourceCount: number;
+  /** Total size of the package file in bytes. */
+  readonly totalSize: number;
 }
 
 /**

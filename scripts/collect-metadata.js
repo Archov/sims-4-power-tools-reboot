@@ -7,8 +7,8 @@
  *   node scripts/collect-metadata.js <directory> [--output output.json]
  */
 
-import { writeFile } from 'node:fs/promises';
-import { resolve, basename } from 'node:path';
+import { readdir, stat, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { collectPackageMetadata, collectPackagesMetadata, validatePackage } from '../dist/metadata.js';
 
 /**
@@ -21,6 +21,9 @@ function parseArgs() {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--output' || arg === '-o') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('-')) {
+        throw new Error(`The ${arg} option requires a file path argument.`);
+      }
       options.output = args[i + 1];
       i++;
     } else if (arg === '--help' || arg === '-h') {
@@ -65,25 +68,54 @@ async function main() {
   }
 
   const inputPath = resolve(options.input);
+  const inputStats = await stat(inputPath);
 
   try {
-    // For now, let's just collect metadata from a single file
-    // TODO: Add directory support as mentioned in the task
     console.log(`Collecting metadata from: ${inputPath}`);
+
+    const replacer = (key, value) => {
+      if (typeof value === 'bigint') {
+        return `0x${value.toString(16)}`;
+      }
+      if (typeof value === 'number' && (key === 'type' || key === 'group' || key === 'instance')) {
+        return `0x${value.toString(16)}`;
+      }
+      return value;
+    };
+
+    if (inputStats.isDirectory()) {
+      const entries = await readdir(inputPath, { withFileTypes: true });
+      const packageFiles = entries
+        .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.package'))
+        .map((entry) => resolve(inputPath, entry.name));
+
+      if (packageFiles.length === 0) {
+        console.warn('No .package files found in directory.');
+        return;
+      }
+
+      const metadataList = await collectPackagesMetadata(packageFiles);
+      const jsonOutput = JSON.stringify(metadataList, replacer, 2);
+      if (options.output) {
+        const outputPath = resolve(options.output);
+        await writeFile(outputPath, jsonOutput, 'utf8');
+        console.log(`Metadata written to: ${outputPath}`);
+      } else {
+        console.log(jsonOutput);
+      }
+
+      console.log('\nValidation:');
+      for (const packagePath of packageFiles) {
+        const validation = await validatePackage(packagePath);
+        console.log(`- ${validation.filename}: ${validation.resourceCount} resources, ${validation.totalSize} bytes, sha256=${validation.sha256}`);
+      }
+      return;
+    }
 
     const metadata = await collectPackageMetadata(inputPath);
 
     // Pretty print the metadata (handle BigInts and hex conversion for JSON serialization)
-    const jsonOutput = JSON.stringify(metadata, (key, value) => {
-      if (typeof value === 'bigint') {
-        return '0x' + value.toString(16);
-      }
-      // Convert numbers in TGI objects to hex
-      if (typeof value === 'number' && key && (key === 'type' || key === 'group' || key === 'instance')) {
-        return '0x' + value.toString(16);
-      }
-      return value;
-    }, 2);
+    const jsonOutput = JSON.stringify(metadata, replacer, 2);
 
     if (options.output) {
       const outputPath = resolve(options.output);
@@ -95,11 +127,10 @@ async function main() {
 
     // Also show validation info
     console.log('\nValidation:');
-    const validation = await validatePackage(inputPath);
-    console.log(`- Filename: ${validation.filename}`);
-    console.log(`- SHA256: ${validation.sha256}`);
-    console.log(`- Resources: ${validation.resourceCount}`);
-    console.log(`- Size: ${validation.totalSize} bytes`);
+    console.log(`- Filename: ${metadata.filename}`);
+    console.log(`- SHA256: ${metadata.sha256}`);
+    console.log(`- Resources: ${metadata.resources.length}`);
+    console.log(`- Size: ${metadata.totalSize} bytes`);
 
   } catch (error) {
     console.error(`Error: ${error.message}`);
