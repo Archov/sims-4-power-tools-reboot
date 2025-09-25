@@ -11,7 +11,8 @@ import { BinaryResource } from './types/binary-resource.js';
 import { DbpfBinaryStructure } from './types/dbpf-binary-structure.js';
 import { DbpfBinary } from './dbpf-binary.js';
 import { Tgi } from './types/tgi.js';
-import { ResourceInfo, OriginalPackageInfo, MergeMetadata, MetadataError, PackageValidationInfo } from './types/metadata.js';
+import { ResourceInfo, OriginalPackageInfo, MergeMetadata, DeduplicatedMergeMetadata, UniqueResourceInfo, PackageSummary, MetadataError, PackageValidationInfo, SerializableTgi } from './types/metadata.js';
+import { METADATA_TGI } from './constants/metadata-tgi.js';
 
 /**
  * Load a package file and extract its metadata using S4TK validation and DBPF binary access.
@@ -33,6 +34,7 @@ export async function collectPackageMetadata(filePath: string): Promise<Original
         instance: resource.tgi.instance, // Keep as bigint for internal use
       },
       rawDataHash: DbpfBinary.hashResourceData({ resourceData: resource.rawData }),
+      size: resource.size,
       originalOffset: resource.originalOffset,
       compressionFlags: resource.compressionFlags,
     }));
@@ -90,6 +92,98 @@ export function buildMergeMetadata(
   return {
     version,
     originalPackages: packages,
+    mergedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Analyze packages for deduplication and build deduplicated merge metadata.
+ * This function identifies duplicate resources by content hash and creates
+ * mappings of which packages contained each unique resource.
+ *
+ * @param packageFiles - Array of package file paths to analyze
+ * @returns Deduplicated merge metadata with resource mappings
+ */
+export async function analyzePackagesForDeduplication(
+  packageFiles: readonly string[]
+): Promise<DeduplicatedMergeMetadata> {
+  // Collect metadata from all packages
+  const packageMetadata = await collectPackagesMetadata(packageFiles);
+
+  // Build deduplication map: (contentHash + TGI) -> deduplication info with occurrences
+  const deduplicationMap = new Map<string, {
+    readonly contentHash: string;
+    compressionFlags: number;
+    sourcePackages: Set<string>;
+    occurrences: { readonly filename: string; readonly packageSha256: string; readonly tgi: SerializableTgi }[];
+  }>();
+
+  let totalOriginalResources = 0;
+
+  // Analyze each package and its resources
+  for (const pkg of packageMetadata) {
+    totalOriginalResources += pkg.resources.length;
+
+    for (const resourceInfo of pkg.resources) {
+      // Skip resources with the reserved metadata TGI
+      // These should not be included in deduplication as they contain Sims 4 Power Tools metadata
+      if (resourceInfo.tgi.type === METADATA_TGI.type &&
+          resourceInfo.tgi.group === METADATA_TGI.group &&
+          resourceInfo.tgi.instance === METADATA_TGI.instance) {
+        continue;
+      }
+
+      const contentHash = resourceInfo.rawDataHash;
+      const packageName = pkg.filename;
+      const serializableTgi: SerializableTgi = {
+        type: resourceInfo.tgi.type,
+        group: resourceInfo.tgi.group,
+        instance: resourceInfo.tgi.instance.toString(),
+      };
+      const dedupKey = `${contentHash}:${serializableTgi.type}:${serializableTgi.group}:${serializableTgi.instance}`;
+
+      let entry = deduplicationMap.get(dedupKey);
+      if (!entry) {
+        entry = {
+          contentHash,
+          compressionFlags: resourceInfo.compressionFlags,
+          sourcePackages: new Set<string>(),
+          occurrences: [],
+        };
+        deduplicationMap.set(dedupKey, entry);
+      }
+      entry.sourcePackages.add(packageName);
+      entry.occurrences.push({ filename: packageName, packageSha256: pkg.sha256, tgi: serializableTgi });
+    }
+  }
+
+  // Convert to final format
+  const uniqueResources: UniqueResourceInfo[] = Array.from(deduplicationMap.values()).map(
+    (data) => ({
+      tgi: data.occurrences[0].tgi,
+      contentHash: data.contentHash,
+      // size intentionally omitted here; can be filled during assembly if needed
+      compressionFlags: data.compressionFlags,
+      sourcePackages: Array.from(data.sourcePackages),
+      occurrences: data.occurrences,
+    })
+  );
+
+  // Create package summaries
+  const packageSummaries: PackageSummary[] = packageMetadata.map(pkg => ({
+    filename: pkg.filename,
+    sha256: pkg.sha256,
+    headerBytes: pkg.headerBytes,
+    resourceCount: pkg.resources.length,
+    totalSize: pkg.totalSize,
+  }));
+
+  return {
+    version: "2.0-deduped",
+    originalPackages: packageSummaries,
+    uniqueResources,
+    totalOriginalResources,
+    uniqueResourceCount: uniqueResources.length,
     mergedAt: new Date().toISOString(),
   };
 }
