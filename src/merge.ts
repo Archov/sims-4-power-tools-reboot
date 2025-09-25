@@ -57,11 +57,16 @@ async function assembleDeduplicatedStructure(
   // Read all package structures to access the actual binary data
   const packageStructures = new Map<string, DbpfBinaryStructure>();
   const filenameToPathMap = new Map<string, string>();
+  const sha256ToPathMap = new Map<string, string>();
   for (const filePath of packageFiles) {
     const structure = await DbpfBinary.read({ filePath });
     packageStructures.set(filePath, structure);
     const filename = basename(filePath);
+    if (filenameToPathMap.has(filename)) {
+      throw new Error(`Duplicate filename detected: "${filename}". Use unique filenames or switch to sha256-based mapping.`);
+    }
     filenameToPathMap.set(filename, filePath);
+    sha256ToPathMap.set(structure.sha256, filePath);
   }
 
   // Use the first structure as the base for header and other properties
@@ -93,18 +98,18 @@ async function assembleDeduplicatedStructure(
 
   for (const uniqueResource of dedupMetadata.uniqueResources) {
     // Find the actual binary resource data from one of the source packages
-    // We'll use the first package that contains this resource
-    const sourcePackageName = uniqueResource.sourcePackages[0];
-    const sourcePackagePath = filenameToPathMap.get(sourcePackageName);
+    // We'll use the first occurrence (sha256 disambiguates duplicates)
+    const sourcePackageSha256 = uniqueResource.occurrences[0].packageSha256;
+    const sourcePackagePath = sha256ToPathMap.get(sourcePackageSha256);
 
     if (!sourcePackagePath) {
-      throw new Error(`Source package path not found for filename "${sourcePackageName}"`);
+      throw new Error(`Source package path not found for sha256 "${sourcePackageSha256}"`);
     }
 
     const sourceStructure = packageStructures.get(sourcePackagePath);
 
     if (!sourceStructure) {
-      throw new Error(`Source package "${sourcePackageName}" not found for resource ${uniqueResource.tgi.type}:${uniqueResource.tgi.group}:${uniqueResource.tgi.instance}`);
+      throw new Error(`Source package "${sourcePackageSha256}" not found for resource ${uniqueResource.tgi.type}:${uniqueResource.tgi.group}:${uniqueResource.tgi.instance}`);
     }
 
     // Find the resource in the source package by TGI using optimized lookup
@@ -118,7 +123,7 @@ async function assembleDeduplicatedStructure(
     const sourceResource = packageResourceMaps.get(sourcePackagePath!)?.get(tgiKey);
 
     if (!sourceResource) {
-      throw new Error(`Resource ${uniqueResource.tgi.type}:${uniqueResource.tgi.group}:${uniqueResource.tgi.instance} not found in source package "${sourcePackageName}"`);
+      throw new Error(`Resource ${uniqueResource.tgi.type}:${uniqueResource.tgi.group}:${uniqueResource.tgi.instance} not found in source package "${sourcePackageSha256}"`);
     }
 
     // Create the merged resource with updated offset

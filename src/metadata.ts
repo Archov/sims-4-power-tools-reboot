@@ -113,7 +113,7 @@ export async function analyzePackagesForDeduplication(
   const deduplicationMap = new Map<string, {
     compressionFlags: number;
     sourcePackages: Set<string>;
-    occurrences: { readonly filename: string; readonly tgi: SerializableTgi }[];
+    occurrences: { readonly filename: string; readonly packageSha256: string; readonly tgi: SerializableTgi }[];
   }>();
 
   let totalOriginalResources = 0;
@@ -149,7 +149,7 @@ export async function analyzePackagesForDeduplication(
         deduplicationMap.set(contentHash, entry);
       }
       entry.sourcePackages.add(packageName);
-      entry.occurrences.push({ filename: packageName, tgi: serializableTgi });
+      entry.occurrences.push({ filename: packageName, packageSha256: pkg.sha256, tgi: serializableTgi });
     }
   }
 

@@ -6,8 +6,9 @@
  * Usage: node scripts/validate-merge-roundtrip.js <merged-package> <original-dir>
  */
 
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { resolve, extname, basename } from 'node:path';
+import { createHash } from 'node:crypto';
 import { extractResourceData } from '../dist/metadata.js';
 import { METADATA_TGI } from '../dist/merge.js';
 import { DbpfBinary } from '../dist/dbpf-binary.js';
@@ -69,11 +70,8 @@ async function listOriginalPackages(resolvedOriginalDir) {
   for (const pkgPath of allOriginalPackages) {
     try {
       const structure = await DbpfBinary.read({ filePath: pkgPath });
-      const hasMetadataResource = structure.resources.some(resource =>
-        resource.tgi.type === 0x12345678 &&
-        resource.tgi.group === 0x87654321 &&
-        resource.tgi.instance === 0n
-      );
+      const hasMetadataResource =
+        DbpfBinary.extractResource({ structure, tgi: METADATA_TGI }) !== null;
       if (hasMetadataResource) {
         console.log(`   Excluding previously merged package: ${basename(pkgPath)}`);
       } else {

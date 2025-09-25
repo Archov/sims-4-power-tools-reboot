@@ -60,7 +60,14 @@ export interface UniqueResourceInfo {
   /** List of original package filenames that contained this resource. */
   readonly sourcePackages: readonly string[];
   /** Per-package occurrences mapping for perfect unmerge. */
-  readonly occurrences: readonly { readonly filename: string; readonly tgi: SerializableTgi }[];
+  readonly occurrences: readonly {
+    /** Original package filename (basename). */
+    readonly filename: string;
+    /** SHA256 of the original package file to disambiguate duplicates. */
+    readonly packageSha256: string;
+    /** The TGI as it appeared in that package. */
+    readonly tgi: SerializableTgi;
+  }[];
 }
 
 /**
