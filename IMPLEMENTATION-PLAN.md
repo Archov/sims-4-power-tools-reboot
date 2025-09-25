@@ -68,24 +68,17 @@ function extractResourceBinary(structure: DbpfBinaryStructure, tgi: TGI): Buffer
 - Implement correct DBPF structure (96-byte header, data at 0x60)
 - Document manual validation: save/load a package and compare SHA256 checksums using CLI or simple Node scripts.
 
-### Phase 2: Merge Implementation (2-3 hours)
+### Phase 2: Merge Implementation with Deduplication (3-4 hours)
 **File: `src/merge.ts`**
 
 ```typescript
-interface MergeMetadata {
-  version: string;
-  originalPackages: Array<{
-    filename: string;
-    sha256: string;           // Checksum of original file
-    headerBytes: string;      // Base64 encoded 96-byte header
-    resources: Array<{
-      tgi: TGI;
-      rawDataHash: string;    // SHA256 of raw compressed bytes
-      originalOffset: number;
-      compressionFlags: number;
-    }>;
-  }>;
-  mergedAt: string;           // ISO timestamp
+interface DeduplicatedMergeMetadata {
+  version: "2.0-deduped";
+  originalPackages: PackageSummary[];        // Package info without full resource lists
+  uniqueResources: UniqueResourceInfo[];     // Unique resources with source mappings
+  totalOriginalResources: number;            // Statistics
+  uniqueResourceCount: number;
+  mergedAt: string;
 }
 
 async function mergePackages(inputDir: string, outputFile: string): Promise<void>
@@ -93,12 +86,13 @@ async function mergePackages(inputDir: string, outputFile: string): Promise<void
 
 **Process:**
 1. Scan directory for .package files
-2. Use S4TK to validate packages and extract metadata
-3. Use `dbpf-binary.ts` to read raw resource data
-4. Create merge metadata with SHA256 checksums
-5. Write merged package with metadata as special resource
-6. Verify byte-perfect reconstruction capability
-7. Provide manual QA checklist (commands to merge fixtures, compare hashes) upon completion.
+2. Analyze all resources across all packages for deduplication by SHA256 content hash
+3. Build deduplication map tracking which packages contain each unique resource
+4. Store only unique resources in merged package (50-70% space savings typical)
+5. Create `DeduplicatedMergeMetadata` with resource-to-package mappings
+6. Write deduplicated merged package with metadata as special resource
+7. Verify perfect unmerging capability through metadata mappings
+8. Provide manual QA checklist for deduplication validation and round-trip testing.
 
 ### Phase 3: Unmerge Implementation (2-3 hours)
 **File: `src/unmerge.ts`**
@@ -108,14 +102,15 @@ async function unmergePackage(mergedFile: string, outputDir: string): Promise<vo
 ```
 
 **Process:**
-1. Read merged package using S4TK (metadata extraction only)
-2. Extract merge metadata resource
-3. For each original package:
-   - Reconstruct exact DBPF structure using stored metadata
-   - Copy raw resource data from merged file
-   - Write reconstructed package using `dbpf-binary.ts`
-   - Verify SHA256 matches original
-4. Outline manual steps so users can run unmerge and compare outputs without inspecting internals.
+1. Read deduplicated merged package using S4TK (metadata extraction only)
+2. Extract `DeduplicatedMergeMetadata` resource with resource-to-package mappings
+3. For each original package in metadata:
+   - Use `sourcePackages` mappings to identify which unique resources belong to this package
+   - Create new `DbpfBinaryStructure` with package's header information
+   - Copy appropriate resource data from merged package's unique resources
+   - Recalculate offsets for the reconstructed package structure
+   - Write reconstructed package with original filename and verify SHA256 matches metadata
+4. Outline manual steps for unmerging deduplicated packages and validating reconstruction integrity.
 
 ### Phase 4: CLI Interface (1 hour)
 **File: `src/cli.ts`**
@@ -192,17 +187,18 @@ test('full merge/unmerge cycle produces identical files', async () => {
 ## Success Criteria
 
 ### MVP Complete When:
-1. ✅ Can merge all .package files in a folder
-2. ✅ Can unmerge back to identical original files (SHA256 match)
-3. ✅ Merged packages validate with S4TK
-4. ✅ Reconstructed packages validate with S4TK
-5. ✅ CLI interface works for basic operations
+1. ✅ Can merge all .package files in a folder with automatic deduplication (50-70% space savings)
+2. ✅ Can unmerge deduplicated merged packages back to identical original files (SHA256 match)
+3. ✅ Deduplicated merged packages validate with S4TK
+4. ✅ Reconstructed packages validate with S4TK and work in-game
+5. ✅ CLI interface works for merge/unmerge operations with deduplication support
 
 ### Verification Process:
-1. Test with real CC packages from Sims 4 community and record observed outcomes.
-2. SHA256 comparison before/after merge/unmerge cycle (manual command).
-3. Manual verification that reconstructed packages work in-game (primary).
-4. Performance test with large CC libraries (>1GB) and note any manual findings.
+1. Test deduplication with real CC packages and measure space savings (target: 50-70% reduction).
+2. SHA256 comparison before/after merge/unmerge cycle (manual command validation).
+3. Manual verification that reconstructed packages work in-game (primary success criterion).
+4. Performance test with large CC libraries (>1GB) and validate deduplication efficiency.
+5. Round-trip validation ensuring metadata accurately represents source packages.
 
 ## Risk Mitigation
 
