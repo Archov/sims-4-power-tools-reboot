@@ -36,20 +36,31 @@ export interface OriginalPackageInfo {
 }
 
 /**
+ * JSON-serializable TGI. BigInt instance is encoded as a decimal string.
+ */
+export interface SerializableTgi {
+  readonly type: number;
+  readonly group: number;
+  readonly instance: string;
+}
+
+/**
  * Information about a unique resource stored in the merged package.
  * Resources are deduplicated by content hash, so each unique resource appears only once.
  */
 export interface UniqueResourceInfo {
-  /** Type-Group-Instance identifier for this resource. */
-  readonly tgi: Tgi;
+  /** Canonical TGI for this content (first occurrence). */
+  readonly tgi: SerializableTgi;
   /** SHA256 hash of the raw compressed resource data. */
   readonly contentHash: string;
-  /** Size of the compressed resource data in bytes. */
-  readonly size: number;
+  /** Size of the compressed resource data in bytes (compressed). */
+  readonly size?: number;
   /** Compression flags from the resource index entry. */
   readonly compressionFlags: number;
   /** List of original package filenames that contained this resource. */
   readonly sourcePackages: readonly string[];
+  /** Per-package occurrences mapping for perfect unmerge. */
+  readonly occurrences: readonly { readonly filename: string; readonly tgi: SerializableTgi }[];
 }
 
 /**

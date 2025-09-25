@@ -125,7 +125,7 @@ async function assembleDeduplicatedStructure(
     const mergedResource: BinaryResource = {
       ...sourceResource,
       offset: currentOffset,
-      originalOffset: sourceResource.offset, // Keep original for reference
+      originalOffset: sourceResource.originalOffset,
     };
 
     mergedResources.push(mergedResource);
@@ -162,7 +162,15 @@ function createMetadataResource(dedupMetadata: DeduplicatedMergeMetadata, offset
     if (typeof value === 'bigint') {
       return `0x${value.toString(16)}`;
     }
-    if (typeof value === 'number' && (key === 'type' || key === 'group' || key === 'instance')) {
+    // Handle SerializableTgi - convert number fields to hex, instance is already a string
+    if (key === 'tgi' && value && typeof value === 'object' && typeof value.instance === 'string') {
+      return {
+        type: `0x${value.type.toString(16)}`,
+        group: `0x${value.group.toString(16)}`,
+        instance: value.instance // Already a decimal string
+      };
+    }
+    if (typeof value === 'number' && (key === 'type' || key === 'group')) {
       return `0x${value.toString(16)}`;
     }
     return value;

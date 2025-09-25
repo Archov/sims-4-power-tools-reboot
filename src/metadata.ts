@@ -11,7 +11,7 @@ import { BinaryResource } from './types/binary-resource.js';
 import { DbpfBinaryStructure } from './types/dbpf-binary-structure.js';
 import { DbpfBinary } from './dbpf-binary.js';
 import { Tgi } from './types/tgi.js';
-import { ResourceInfo, OriginalPackageInfo, MergeMetadata, DeduplicatedMergeMetadata, UniqueResourceInfo, PackageSummary, MetadataError, PackageValidationInfo } from './types/metadata.js';
+import { ResourceInfo, OriginalPackageInfo, MergeMetadata, DeduplicatedMergeMetadata, UniqueResourceInfo, PackageSummary, MetadataError, PackageValidationInfo, SerializableTgi } from './types/metadata.js';
 
 /**
  * Load a package file and extract its metadata using S4TK validation and DBPF binary access.
@@ -109,12 +109,11 @@ export async function analyzePackagesForDeduplication(
   // Collect metadata from all packages
   const packageMetadata = await collectPackagesMetadata(packageFiles);
 
-  // Build deduplication map: contentHash -> unique resource info + source packages
+  // Build deduplication map: contentHash -> deduplication info with occurrences
   const deduplicationMap = new Map<string, {
-    sourcePackages: string[];
-    tgi: Tgi;
-    size: number;
     compressionFlags: number;
+    sourcePackages: Set<string>;
+    occurrences: { readonly filename: string; readonly tgi: SerializableTgi }[];
   }>();
 
   let totalOriginalResources = 0;
@@ -132,37 +131,37 @@ export async function analyzePackagesForDeduplication(
         continue;
       }
 
-      const tgiString = `${resourceInfo.tgi.type}:${resourceInfo.tgi.group}:${resourceInfo.tgi.instance}`;
-      const deduplicationKey = `${resourceInfo.rawDataHash}:${tgiString}`;
+      const contentHash = resourceInfo.rawDataHash;
       const packageName = pkg.filename;
+      const serializableTgi: SerializableTgi = {
+        type: resourceInfo.tgi.type,
+        group: resourceInfo.tgi.group,
+        instance: resourceInfo.tgi.instance.toString(),
+      };
 
-      if (deduplicationMap.has(deduplicationKey)) {
-        // Resource already exists, just add this package to the list
-        const existing = deduplicationMap.get(deduplicationKey)!;
-        if (!existing.sourcePackages.includes(packageName)) {
-          existing.sourcePackages.push(packageName);
-        }
-      } else {
-        // First time seeing this resource, we need to get the actual binary data
-        // For now, we'll create a placeholder - this will be resolved when we merge
-        deduplicationMap.set(deduplicationKey, {
-          sourcePackages: [packageName],
-          tgi: resourceInfo.tgi,
-          size: resourceInfo.size,
+      let entry = deduplicationMap.get(contentHash);
+      if (!entry) {
+        entry = {
           compressionFlags: resourceInfo.compressionFlags,
-        });
+          sourcePackages: new Set<string>(),
+          occurrences: [],
+        };
+        deduplicationMap.set(contentHash, entry);
       }
+      entry.sourcePackages.add(packageName);
+      entry.occurrences.push({ filename: packageName, tgi: serializableTgi });
     }
   }
 
   // Convert to final format
   const uniqueResources: UniqueResourceInfo[] = Array.from(deduplicationMap.entries()).map(
     ([contentHash, data]) => ({
-      tgi: data.tgi,
+      tgi: data.occurrences[0].tgi,
       contentHash,
-      size: data.size,
+      // size intentionally omitted here; can be filled during assembly if needed
       compressionFlags: data.compressionFlags,
-      sourcePackages: data.sourcePackages,
+      sourcePackages: Array.from(data.sourcePackages),
+      occurrences: data.occurrences,
     })
   );
 
