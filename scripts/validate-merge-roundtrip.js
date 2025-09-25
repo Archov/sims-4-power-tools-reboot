@@ -79,15 +79,39 @@ async function main() {
     const metadata = JSON.parse(metadataJson);
     console.log(`✅ Found metadata for ${metadata.originalPackages.length} original packages\n`);
 
-    // 2. Get list of original packages
+    // 2. Get list of original packages and filter out previously merged ones
     console.log('📂 2. Scanning original package directory...');
-    const originalPackages = await enumeratePackageFiles(resolvedOriginalDir);
-    console.log(`✅ Found ${originalPackages.length} original package files\n`);
+    const allOriginalPackages = await enumeratePackageFiles(resolvedOriginalDir);
+    console.log(`✅ Found ${allOriginalPackages.length} total package files`);
+
+    // Filter out packages that contain our metadata resource (previously merged packages)
+    const validOriginalPackages = [];
+    for (const pkgPath of allOriginalPackages) {
+      try {
+        const structure = await DbpfBinary.read({ filePath: pkgPath });
+        const hasMetadataResource = structure.resources.some(resource =>
+          resource.tgi.type === 0x12345678 &&
+          resource.tgi.group === 0x87654321 &&
+          resource.tgi.instance === 0n
+        );
+
+        if (hasMetadataResource) {
+          console.log(`   Excluding previously merged package: ${basename(pkgPath)}`);
+        } else {
+          validOriginalPackages.push(pkgPath);
+        }
+      } catch (error) {
+        console.log(`   Error reading ${basename(pkgPath)}: ${error.message}`);
+        process.exit(1);
+      }
+    }
+
+    console.log(`✅ Found ${validOriginalPackages.length} valid original package files (excluded ${allOriginalPackages.length - validOriginalPackages.length} previously merged packages)\n`);
 
     // 3. Compare package counts
     console.log('🔍 3. Validating package counts...');
-    if (metadata.originalPackages.length !== originalPackages.length) {
-      console.log(`❌ Mismatch: metadata lists ${metadata.originalPackages.length} packages, but found ${originalPackages.length} in directory`);
+    if (metadata.originalPackages.length !== validOriginalPackages.length) {
+      console.log(`❌ Mismatch: metadata lists ${metadata.originalPackages.length} packages, but found ${validOriginalPackages.length} valid packages in directory`);
       process.exit(1);
     }
     console.log('✅ Package counts match\n');
@@ -97,8 +121,8 @@ async function main() {
     let successCount = 0;
     const originalPackageMap = new Map();
 
-    // Create lookup map of original packages by filename
-    for (const pkgPath of originalPackages) {
+    // Create lookup map of valid original packages by filename
+    for (const pkgPath of validOriginalPackages) {
       const filename = basename(pkgPath);
       const structure = await DbpfBinary.read({ filePath: pkgPath });
       originalPackageMap.set(filename, {
@@ -144,12 +168,13 @@ async function main() {
     console.log(`📊 Results: ${successCount}/${metadata.originalPackages.length} packages validated successfully`);
 
     // Show deduplication statistics
-    const dedupRatio = metadata.uniqueResourceCount / metadata.totalOriginalResources;
+    const duplicatesEliminated = metadata.totalOriginalResources - metadata.uniqueResourceCount;
+    const dedupRatio = duplicatesEliminated / metadata.totalOriginalResources;
     console.log(`\n📈 Deduplication Summary:`);
     console.log(`   Total original resources: ${metadata.totalOriginalResources}`);
     console.log(`   Unique resources stored: ${metadata.uniqueResourceCount}`);
     console.log(`   Deduplication ratio: ${(dedupRatio * 100).toFixed(1)}%`);
-    console.log(`   Duplicates eliminated: ${metadata.totalOriginalResources - metadata.uniqueResourceCount}`);
+    console.log(`   Duplicates eliminated: ${duplicatesEliminated}`);
 
     if (successCount === metadata.originalPackages.length) {
       console.log('🎉 Metadata validation PASSED! Merged package accurately represents source packages with deduplication.');

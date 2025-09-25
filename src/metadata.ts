@@ -33,6 +33,7 @@ export async function collectPackageMetadata(filePath: string): Promise<Original
         instance: resource.tgi.instance, // Keep as bigint for internal use
       },
       rawDataHash: DbpfBinary.hashResourceData({ resourceData: resource.rawData }),
+      size: resource.size,
       originalOffset: resource.originalOffset,
       compressionFlags: resource.compressionFlags,
     }));
@@ -110,7 +111,6 @@ export async function analyzePackagesForDeduplication(
 
   // Build deduplication map: contentHash -> unique resource info + source packages
   const deduplicationMap = new Map<string, {
-    resource: BinaryResource;
     sourcePackages: string[];
     tgi: Tgi;
     size: number;
@@ -124,23 +124,31 @@ export async function analyzePackagesForDeduplication(
     totalOriginalResources += pkg.resources.length;
 
     for (const resourceInfo of pkg.resources) {
-      const contentHash = resourceInfo.rawDataHash;
+      // Skip resources with the reserved metadata TGI (0x12345678:0x87654321:0)
+      // These should not be included in deduplication as they contain Sims 4 Power Tools metadata
+      if (resourceInfo.tgi.type === 0x12345678 &&
+          resourceInfo.tgi.group === 0x87654321 &&
+          resourceInfo.tgi.instance === 0n) {
+        continue;
+      }
+
+      const tgiString = `${resourceInfo.tgi.type}:${resourceInfo.tgi.group}:${resourceInfo.tgi.instance}`;
+      const deduplicationKey = `${resourceInfo.rawDataHash}:${tgiString}`;
       const packageName = pkg.filename;
 
-      if (deduplicationMap.has(contentHash)) {
+      if (deduplicationMap.has(deduplicationKey)) {
         // Resource already exists, just add this package to the list
-        const existing = deduplicationMap.get(contentHash)!;
+        const existing = deduplicationMap.get(deduplicationKey)!;
         if (!existing.sourcePackages.includes(packageName)) {
           existing.sourcePackages.push(packageName);
         }
       } else {
         // First time seeing this resource, we need to get the actual binary data
         // For now, we'll create a placeholder - this will be resolved when we merge
-        deduplicationMap.set(contentHash, {
-          resource: null as any, // Will be filled during merge
+        deduplicationMap.set(deduplicationKey, {
           sourcePackages: [packageName],
           tgi: resourceInfo.tgi,
-          size: 0, // Will be calculated during merge
+          size: resourceInfo.size,
           compressionFlags: resourceInfo.compressionFlags,
         });
       }

@@ -6,7 +6,8 @@
 |- **Deduplication** Automatic elimination of duplicate resources by content hash, with space savings of 50-70% typical.
 
 ## Prerequisites
-|- **Modules ready** eadDbpfBinary() from src/dbpf-binary.ts and metadata helpers from src/metadata.ts.
+|- **Modules ready** 
+eadDbpfBinary() from src/dbpf-binary.ts and metadata helpers from src/metadata.ts.
 |- **Fixtures** Sample packages located under 	est-packages/ for manual spot-checks.
 
 ## Steps
@@ -26,7 +27,8 @@ ode:fs utilities to list .package files within inputDir, skipping non-files.
 |- **Deduplication** Automatic resource deduplication by content hash (50-70% typical space savings).
 |- **Metadata accuracy** DeduplicatedMergeMetadata records original filenames, SHA256 digests, and resource-to-package mappings.
 |- **Perfect unmerging** Metadata contains sufficient information to reconstruct original packages exactly.
-|- **Byte preservation** No mutation of awData buffers; compression flags and data remain untouched.
+|- **Byte preservation** No mutation of 
+awData buffers; compression flags and data remain untouched.
 |- **Space efficiency** Only unique resources stored once, regardless of duplication across packages.
 |- **Error handling** Meaningful errors for empty directories, inaccessible files, or DBPF validation failures.
 |- **Manual guidance** Step-by-step CLI commands for merging, validating deduplication, and round-trip testing.
@@ -35,23 +37,23 @@ ode:fs utilities to list .package files within inputDir, skipping non-files.
 |- **Deduplication merge** Run merge and verify automatic deduplication (expect 50-70% resource reduction).
 |- **Space savings validation** Compare merged package size vs. sum of individual packages.
 |- **Metadata inspection** Extract and validate DeduplicatedMergeMetadata with resource mappings.
-|- **Round-trip validation** Use alidate-merge-roundtrip.js to ensure metadata matches source packages.
+|- **Round-trip validation** Use validate-merge-roundtrip.js to ensure metadata matches source packages.
 |- **Hash verification** Confirm all original package SHA256s are preserved in metadata.
 |- **Error scenario** Try merging empty directory and confirm descriptive error handling.
 
 ## Technical Implementation
 
 ### Deduplication Algorithm
-`	ypescript
+```typescript
 // 1. Analyze all resources across all packages
 // 2. Group by content hash (SHA256)
 // 3. Track which packages contain each unique resource
 // 4. Store only unique resources in merged package
 // 5. Create metadata with package-to-resource mappings
-`
+```
 
 ### Metadata Structure
-`	ypescript
+```typescript
 interface DeduplicatedMergeMetadata {
   version: "2.0-deduped";
   originalPackages: PackageSummary[];        // Package info without full resource lists
@@ -60,7 +62,7 @@ interface DeduplicatedMergeMetadata {
   uniqueResourceCount: number;
   mergedAt: string;
 }
-`
+```
 
 ## Notes
 |- **Performance** Deduplication analysis adds upfront cost but saves significant space.

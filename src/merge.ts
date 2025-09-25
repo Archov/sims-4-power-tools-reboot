@@ -56,10 +56,12 @@ async function assembleDeduplicatedStructure(
 ): Promise<DbpfBinaryStructure> {
   // Read all package structures to access the actual binary data
   const packageStructures = new Map<string, DbpfBinaryStructure>();
+  const filenameToPathMap = new Map<string, string>();
   for (const filePath of packageFiles) {
     const structure = await DbpfBinary.read({ filePath });
+    packageStructures.set(filePath, structure);
     const filename = basename(filePath);
-    packageStructures.set(filename, structure);
+    filenameToPathMap.set(filename, filePath);
   }
 
   // Use the first structure as the base for header and other properties
@@ -73,6 +75,17 @@ async function assembleDeduplicatedStructure(
     throw new Error('No package structures available for merging');
   }
 
+  // Create resource lookup maps for each package to optimize TGI lookups from O(N*M) to O(1)
+  const packageResourceMaps = new Map<string, Map<string, BinaryResource>>();
+  for (const [filePath, structure] of packageStructures.entries()) {
+    const resourceMap = new Map<string, BinaryResource>();
+    for (const resource of structure.resources) {
+      const tgiKey = `${resource.tgi.type}:${resource.tgi.group}:${resource.tgi.instance}`;
+      resourceMap.set(tgiKey, resource);
+    }
+    packageResourceMaps.set(filePath, resourceMap);
+  }
+
   const mergedResources: BinaryResource[] = [];
 
   // Process each unique resource and find its binary data from source packages
@@ -82,18 +95,27 @@ async function assembleDeduplicatedStructure(
     // Find the actual binary resource data from one of the source packages
     // We'll use the first package that contains this resource
     const sourcePackageName = uniqueResource.sourcePackages[0];
-    const sourceStructure = packageStructures.get(sourcePackageName);
+    const sourcePackagePath = filenameToPathMap.get(sourcePackageName);
+
+    if (!sourcePackagePath) {
+      throw new Error(`Source package path not found for filename "${sourcePackageName}"`);
+    }
+
+    const sourceStructure = packageStructures.get(sourcePackagePath);
 
     if (!sourceStructure) {
       throw new Error(`Source package "${sourcePackageName}" not found for resource ${uniqueResource.tgi.type}:${uniqueResource.tgi.group}:${uniqueResource.tgi.instance}`);
     }
 
-    // Find the resource in the source package by TGI
-    const sourceResource = sourceStructure.resources.find(r =>
-      r.tgi.type === uniqueResource.tgi.type &&
-      r.tgi.group === uniqueResource.tgi.group &&
-      r.tgi.instance === uniqueResource.tgi.instance
-    );
+    // Find the resource in the source package by TGI using optimized lookup
+    // Convert SerializableTgi back to Tgi for lookup
+    const tgiForLookup: Tgi = {
+      type: uniqueResource.tgi.type,
+      group: uniqueResource.tgi.group,
+      instance: BigInt(uniqueResource.tgi.instance),
+    };
+    const tgiKey = `${tgiForLookup.type}:${tgiForLookup.group}:${tgiForLookup.instance}`;
+    const sourceResource = packageResourceMaps.get(sourcePackagePath!)?.get(tgiKey);
 
     if (!sourceResource) {
       throw new Error(`Resource ${uniqueResource.tgi.type}:${uniqueResource.tgi.group}:${uniqueResource.tgi.instance} not found in source package "${sourcePackageName}"`);
@@ -108,9 +130,6 @@ async function assembleDeduplicatedStructure(
 
     mergedResources.push(mergedResource);
     currentOffset += sourceResource.size;
-
-    // Update the unique resource info with the actual size
-    (uniqueResource as any).size = sourceResource.size;
   }
 
   // Create merged structure
@@ -193,11 +212,10 @@ async function verifyMergedPackage(outputFile: string, originalMetadata: Dedupli
     const extractedMetadata: MergeMetadata = JSON.parse(extractedJson, (key, value) => {
       // Convert hex strings back to numbers/bigints for TGIs
       if (typeof value === 'string' && value.startsWith('0x')) {
-        const numValue = parseInt(value, 16);
         if (key === 'instance') {
-          return BigInt(numValue);
+          return BigInt(value);
         }
-        return numValue;
+        return Number.parseInt(value, 16);
       }
       return value;
     });
@@ -222,8 +240,9 @@ async function verifyMergedPackage(outputFile: string, originalMetadata: Dedupli
     console.log(`Verification: Metadata contains ${extractedDedupMetadata.uniqueResourceCount} unique resources (${extractedDedupMetadata.totalOriginalResources} total original resources)`);
 
     // Log deduplication statistics
-    const dedupRatio = extractedDedupMetadata.uniqueResourceCount / extractedDedupMetadata.totalOriginalResources;
-    console.log(`Verification: Deduplication ratio: ${(dedupRatio * 100).toFixed(1)}% (${extractedDedupMetadata.totalOriginalResources - extractedDedupMetadata.uniqueResourceCount} duplicates eliminated)`);
+    const duplicatesEliminated = extractedDedupMetadata.totalOriginalResources - extractedDedupMetadata.uniqueResourceCount;
+    const dedupRatio = extractedDedupMetadata.totalOriginalResources > 0 ? duplicatesEliminated / extractedDedupMetadata.totalOriginalResources : 0;
+    console.log(`Verification: Deduplication ratio: ${(dedupRatio * 100).toFixed(1)}% (${duplicatesEliminated} duplicates eliminated)`);
 
     // Log SHA256 summary for each original package
     console.log('\nOriginal Package SHA256 Summary:');
@@ -251,14 +270,53 @@ export async function mergePackages(inputDir: string, outputFile: string): Promi
   const resolvedInputDir = resolve(inputDir);
 
   // Enumerate .package files in the input directory
-  const packageFiles = await enumeratePackageFiles(resolvedInputDir);
+  let packageFiles = await enumeratePackageFiles(resolvedInputDir);
 
   if (packageFiles.length === 0) {
     throw new Error(`No .package files found in directory: ${resolvedInputDir}`);
   }
 
-  console.log(`Found ${packageFiles.length} package files to merge`);
-  packageFiles.forEach(file => console.log(`  - ${file}`));
+  // Filter out packages that contain our metadata resource (previously merged packages)
+  const filteredPackageFiles: string[] = [];
+  const skippedPackages: string[] = [];
+
+  for (const filePath of packageFiles) {
+    try {
+      const structure = await DbpfBinary.read({ filePath });
+      const hasMetadataResource = structure.resources.some(resource =>
+        resource.tgi.type === METADATA_TGI.type &&
+        resource.tgi.group === METADATA_TGI.group &&
+        resource.tgi.instance === METADATA_TGI.instance
+      );
+
+      if (hasMetadataResource) {
+        console.log(`  - ${filePath} (SKIPPED - contains metadata from previous merge)`);
+        skippedPackages.push(filePath);
+      } else {
+        console.log(`  - ${filePath}`);
+        filteredPackageFiles.push(filePath);
+      }
+    } catch (error) {
+      console.error(`Failed to read package ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  }
+
+  if (filteredPackageFiles.length === 0) {
+    throw new Error('No valid packages to merge (all packages appear to be previously merged outputs)');
+  }
+
+  // Warn about skipped packages
+  if (skippedPackages.length > 0) {
+    console.warn(`\n⚠️  WARNING: ${skippedPackages.length} package(s) were skipped because they contain metadata from previous merges:`);
+    skippedPackages.forEach(pkg => console.warn(`   - ${pkg}`));
+    console.warn('These packages should not be included in merge operations. Only merge original source packages.');
+    console.warn('');
+  }
+
+  console.log(`\nFiltered to ${filteredPackageFiles.length} valid packages (excluded ${packageFiles.length - filteredPackageFiles.length} previously merged packages)`);
+
+  packageFiles = filteredPackageFiles;
 
   // Analyze packages for deduplication
   console.log('\nAnalyzing packages for deduplication...');
@@ -268,7 +326,7 @@ export async function mergePackages(inputDir: string, outputFile: string): Promi
 
   // Calculate space savings
   const originalTotalSize = dedupMetadata.originalPackages.reduce((sum, pkg) => sum + pkg.totalSize, 0);
-  console.log(`Estimated space savings: ~${Math.round((1 - dedupMetadata.uniqueResourceCount / dedupMetadata.totalOriginalResources) * 100)}% reduction in resource storage`);
+  console.log(`Estimated space savings: ~${Math.round(dedupMetadata.totalOriginalResources > 0 ? (1 - dedupMetadata.uniqueResourceCount / dedupMetadata.totalOriginalResources) * 100 : 0)}% reduction in resource storage`);
 
   // Assemble deduplicated merged package structure
   console.log('\nAssembling deduplicated merged package structure...');
@@ -277,7 +335,9 @@ export async function mergePackages(inputDir: string, outputFile: string): Promi
 
   // Calculate where to place the metadata resource (after all other resources)
   const lastResource = mergedStructure.resources[mergedStructure.resources.length - 1];
-  const metadataOffset = lastResource.offset + lastResource.size;
+  const metadataOffset = lastResource
+    ? lastResource.offset + lastResource.size
+    : mergedStructure.dataStartOffset;
 
   // Embed deduplicated merge metadata as a special resource at the end
   console.log('Embedding deduplicated merge metadata resource...');

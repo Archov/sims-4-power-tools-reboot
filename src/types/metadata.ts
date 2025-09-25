@@ -11,6 +11,8 @@ export interface ResourceInfo {
   readonly tgi: Tgi;
   /** SHA256 hash of the raw compressed resource data. */
   readonly rawDataHash: string;
+  /** Size of the compressed resource data in bytes. */
+  readonly size: number;
   /** Original byte offset of this resource in the package. */
   readonly originalOffset: number;
   /** Compression flags from the resource index entry. */

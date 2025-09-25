@@ -45,7 +45,7 @@ async function main() {
     // Show a sample of the metadata
     if (metadata.originalPackages.length > 0) {
       const sample = metadata.originalPackages[0];
-      console.log(`📦 Sample package: ${sample.filename} (${sample.resources.length} resources)`);
+      console.log(`📦 Sample package: ${sample.filename} (${sample.resourceCount} resources)`);
     }
 
     process.exit(metadata.originalPackages.length > 0 ? 0 : 1);
