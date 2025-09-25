@@ -15,6 +15,9 @@ import { collectPackagesMetadata, analyzePackagesForDeduplication, extractResour
 import { OriginalPackageInfo, MergeMetadata, DeduplicatedMergeMetadata } from './types/metadata.js';
 import { METADATA_TGI } from './constants/metadata-tgi.js';
 
+// Re-export for backward compatibility with scripts
+export { METADATA_TGI } from './constants/metadata-tgi.js';
+
 
 /**
  * Enumerate all .package files in a directory.
