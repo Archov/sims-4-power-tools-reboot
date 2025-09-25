@@ -1,6 +1,6 @@
 ---
 description: Writing Typescript
-globs: *.js,*.ts
+globs: "*.js,*.ts"
 alwaysApply: false
 ---
 # General Code Style & Formatting
