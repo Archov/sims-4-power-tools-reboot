@@ -13,11 +13,24 @@ import { mkdir, stat, readdir } from 'node:fs/promises';
 import process from 'node:process';
 import { createHash } from 'node:crypto';
 
+/**
+ * Log an error message prefixed with "[round-trip-test]" and mark the process as failed.
+ * @param {string} message - The error message to log.
+ */
 function fail(message) {
   console.error(`[round-trip-test] ${message}`);
   process.exitCode = 1;
 }
 
+/**
+ * Parse command-line arguments for the script's input, output, and help options.
+ *
+ * Recognizes long and short forms: `--input` / `-i`, `--output` / `-o`, and `--help` / `-h`.
+ * @returns {{input?: string, output?: string, help?: boolean}} An object with parsed options:
+ *  - `input`: path to a .package file or directory (if provided),
+ *  - `output`: explicit output path or base directory (if provided),
+ *  - `help`: `true` when help was requested.
+ */
 function parseArgs() {
   const args = process.argv.slice(2);
   const options = {};
@@ -36,18 +49,40 @@ function parseArgs() {
   return options;
 }
 
+/**
+ * Print usage instructions and available CLI options for the round-trip test script.
+ *
+ * Displays command syntax, the accepted flags (`--input`/`-i`, `--output`/`-o`, `--help`/`-h`),
+ * and the default output path behavior.
+ */
 function printHelp() {
   console.log(`DBPF Round-Trip Test\n\nUsage:\n  node scripts/round-trip-test.js --input <path> [--output <path>]\n\nOptions:\n  --input,  -i   Path to the source .package file or directory containing .package files\n  --output, -o   Optional output path (defaults to tmp/<name>.roundtrip.package or tmp/ for directories)\n  --help,   -h   Show this message\n`);
 }
 
+/**
+ * Compute the SHA-256 hex digest of a buffer.
+ * @param {Buffer|Uint8Array} buffer - Data to hash.
+ * @returns {string} The SHA-256 digest encoded as a lowercase hexadecimal string.
+ */
 function sha256(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
+/**
+ * Ensure the directory at the given path exists, creating it and any missing parents.
+ *
+ * @param {string} path - Directory path to create; no-op if it already exists.
+ */
 async function ensureDir(path) {
   await mkdir(path, { recursive: true });
 }
 
+/**
+ * Verifies that the given filesystem path exists and is a file or directory.
+ *
+ * @param {string} path - Filesystem path to validate.
+ * @throws {Error} If the path does not exist or is not a file or directory. On error `fail(...)` is called (sets process exitCode to 1) before the error is rethrown.
+ */
 async function ensureInputExists(path) {
   try {
     const stats = await stat(path);
@@ -60,6 +95,13 @@ async function ensureInputExists(path) {
   }
 }
 
+/**
+ * Resolve an input path to one or more .package file paths.
+ *
+ * @param {string} inputPath - Path to a file or directory to inspect.
+ * @returns {Promise<string[]>} An array of package file paths: if `inputPath` is a file, an array containing that file; if it's a directory, an array of all files in the directory whose names end with `.package` (case-insensitive), sorted.
+ * @throws {Error} If `inputPath` exists but is neither a file nor a directory.
+ */
 async function getPackageFiles(inputPath) {
   const stats = await stat(inputPath);
   if (stats.isFile()) {
@@ -76,6 +118,13 @@ async function getPackageFiles(inputPath) {
   }
 }
 
+/**
+ * Determine the resolved output path to use for round-trip files based on the input and any explicit output.
+ * @param {string} inputPath - Original input file or directory path.
+ * @param {string|undefined} explicitOutput - If provided, this path is resolved and returned unchanged.
+ * @param {import('fs').Stats} inputStats - File system stats for inputPath; used to detect whether inputPath is a directory.
+ * @returns {string} Resolved output path: the explicit output if given; otherwise `tmp` for directory inputs or `tmp/<name>.roundtrip.package` for file inputs.
+ */
 function chooseOutputPath(inputPath, explicitOutput, inputStats) {
   if (explicitOutput) {
     return resolve(explicitOutput);
@@ -89,6 +138,19 @@ function chooseOutputPath(inputPath, explicitOutput, inputStats) {
   }
 }
 
+/**
+ * Compute the output filesystem path to use for a single input package.
+ *
+ * If the input path refers to a directory, returns a path inside `outputBase`
+ * using the input file's basename with the `.package` extension replaced by
+ * `.roundtrip.package`. If the input path refers to a single file, returns
+ * `outputBase` unchanged (treated as the target file path).
+ *
+ * @param {string} inputPath - Original input path (file or directory entry).
+ * @param {string} outputBase - Base output path or target file path.
+ * @param {import('fs').Stats} inputStats - fs.Stats for the original input path.
+ * @returns {string} The computed output path for the input package.
+ */
 function getOutputPathForFile(inputPath, outputBase, inputStats) {
   if (inputStats.isDirectory()) {
     const inputName = basename(inputPath);
@@ -100,13 +162,12 @@ function getOutputPathForFile(inputPath, outputBase, inputStats) {
 }
 
 /**
- * Tests a single DBPF package for round-trip fidelity.
- * Reads, writes, and validates the package structure.
+ * Perform a round-trip read/write validation of a DBPF package and classify the outcome.
  *
- * @param {string} inputPath - Path to the package file to test
- * @param {string} outputBase - Base output directory path
- * @param {object} inputStats - File stats for the input path
- * @returns {string} Test result: 'perfect', 'corrected', or 'failure'
+ * @param {string} inputPath - Path to the package file to test.
+ * @param {string} outputBase - Base path or directory where the round-tripped package will be written.
+ * @param {object} inputStats - fs.Stats for the input path (used to determine output naming when input is a file).
+ * @returns {string} `'perfect'` if the regenerated file is byte-identical and data integrity is preserved, `'corrected'` if metadata/header changed but resource data integrity is preserved, or `'failure'` if resource data integrity is not preserved.
  */
 async function testPackage(inputPath, outputBase, inputStats) {
   const outputPath = getOutputPathForFile(inputPath, outputBase, inputStats);
@@ -156,8 +217,15 @@ async function testPackage(inputPath, outputBase, inputStats) {
 }
 
 /**
- * Main entry point for the DBPF round-trip test utility.
- * Supports testing individual files or entire directories of packages.
+ * Run the DBPF round-trip validation workflow for a file or directory of .package files.
+ *
+ * Parses CLI options, validates input, prepares output paths, iterates over package files to perform round-trip tests,
+ * and prints per-file results and a final summary when operating on a directory.
+ *
+ * Side effects:
+ * - Writes round-tripped package files to the chosen output location.
+ * - Logs progress and results to stdout/stderr.
+ * - Sets process.exitCode to 1 if any file fails when testing a directory of packages.
  */
 async function main() {
   const options = parseArgs();
