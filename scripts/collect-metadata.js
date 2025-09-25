@@ -68,9 +68,9 @@ async function main() {
   }
 
   const inputPath = resolve(options.input);
-  const inputStats = await stat(inputPath);
 
   try {
+    const inputStats = await stat(inputPath);
     console.log(`Collecting metadata from: ${inputPath}`);
 
     const replacer = (key, value) => {
