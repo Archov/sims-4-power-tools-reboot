@@ -111,8 +111,11 @@ async function testPackage(inputPath, outputBase, inputStats) {
 
   const headerMatch = original.header.equals(regenerated.header);
   const resourceCountMatch = original.resources.length === regenerated.resources.length;
-  const compressionFlagsMatch = regenerated.resources.every((resource, index) => resource.compressionFlags === original.resources[index].compressionFlags);
-  const dataHashMatch = original.resources.reduce((hash, r) => hash.update(r.rawData), createHash('sha256')).digest('hex') === regenerated.resources.reduce((hash, r) => hash.update(r.rawData), createHash('sha256')).digest('hex');
+  const compressionFlagsMatch = resourceCountMatch &&
+    regenerated.resources.every((resource, index) => resource.compressionFlags === original.resources[index].compressionFlags);
+  const dataHashMatch = resourceCountMatch &&
+    (original.resources.reduce((hash, r) => hash.update(r.rawData), createHash('sha256')).digest('hex') ===
+     regenerated.resources.reduce((hash, r) => hash.update(r.rawData), createHash('sha256')).digest('hex'));
   const fileHashMatch = original.sha256 === regenerated.sha256;
 
   console.log('\n[round-trip-test] Results:');
