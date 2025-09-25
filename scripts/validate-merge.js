@@ -90,6 +90,10 @@ async function main() {
     }
     const json = data.toString('utf8');
     const metadata = JSON.parse(json);
+    if (metadata.version !== '2.0-deduped') {
+      console.error(`❌ Unexpected metadata version: "${metadata.version}". Expected "2.0-deduped".`);
+      process.exit(1);
+    }
     console.log(`✅ Metadata extracted: ${metadata.originalPackages.length} packages`);
     const reduction = metadata.totalOriginalResources > 0
       ? (1 - (metadata.uniqueResourceCount / metadata.totalOriginalResources)) * 100

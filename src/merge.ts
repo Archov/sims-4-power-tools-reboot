@@ -11,18 +11,10 @@ import { DbpfBinary } from './dbpf-binary.js';
 import { DbpfBinaryStructure } from './types/dbpf-binary-structure.js';
 import { BinaryResource } from './types/binary-resource.js';
 import { Tgi } from './types/tgi.js';
-import { collectPackagesMetadata, buildMergeMetadata, analyzePackagesForDeduplication, extractResourceData } from './metadata.js';
+import { collectPackagesMetadata, analyzePackagesForDeduplication, extractResourceData } from './metadata.js';
 import { OriginalPackageInfo, MergeMetadata, DeduplicatedMergeMetadata } from './types/metadata.js';
+import { METADATA_TGI } from './constants/metadata-tgi.js';
 
-/**
- * Reserved TGI for embedded merge metadata resource.
- * This TGI is specifically reserved for Sims 4 Power Tools metadata.
- */
-export const METADATA_TGI: Tgi = {
-  type: 0x12345678,    // Reserved type identifier
-  group: 0x87654321,   // Reserved group identifier
-  instance: 0n,        // Instance 0 for single metadata resource
-};
 
 /**
  * Enumerate all .package files in a directory.
@@ -332,7 +324,6 @@ export async function mergePackages(inputDir: string, outputFile: string): Promi
   console.log(`Identified ${dedupMetadata.uniqueResourceCount} unique resources (${dedupMetadata.totalOriginalResources - dedupMetadata.uniqueResourceCount} duplicates eliminated)`);
 
   // Calculate space savings
-  const originalTotalSize = dedupMetadata.originalPackages.reduce((sum, pkg) => sum + pkg.totalSize, 0);
   console.log(`Estimated space savings: ~${Math.round(dedupMetadata.totalOriginalResources > 0 ? (1 - dedupMetadata.uniqueResourceCount / dedupMetadata.totalOriginalResources) * 100 : 0)}% reduction in resource storage`);
 
   // Assemble deduplicated merged package structure

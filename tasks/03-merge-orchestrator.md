@@ -7,7 +7,7 @@
 
 ## Prerequisites
 |- **Modules ready**
-readDbpfBinary() from src/dbpf-binary.ts and metadata helpers from src/metadata.ts.
+DbpfBinary.read() from src/dbpf-binary.ts and metadata helpers from src/metadata.ts.
 |- **Fixtures** Sample packages located under test-packages/ for manual spot-checks.
 
 ## Steps
@@ -17,7 +17,7 @@ readDbpfBinary() from src/dbpf-binary.ts and metadata helpers from src/metadata.
 |- **Assemble deduplicated structure** Store only unique resources in the merged package with proper offset calculation.
 |- **Generate deduplicated metadata** Create DeduplicatedMergeMetadata with package summaries and resource-to-package mappings.
 |- **Embed metadata resource** Encode the deduplicated metadata JSON as bytes using the reserved METADATA_TGI.
-|- **Write output** Forward the deduplicated structure to writeDbpfBinary() and persist to outputFile.
+|- **Write output** Forward the deduplicated structure to DbpfBinary.write() and persist to outputFile.
 |- **Post-merge verification** Log deduplication statistics, SHA256 summaries, and confirm metadata extraction.
 |- **Document manual walkthrough** Record commands for merging fixtures and validating deduplication results.
 

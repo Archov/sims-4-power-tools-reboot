@@ -12,6 +12,7 @@ import { DbpfBinaryStructure } from './types/dbpf-binary-structure.js';
 import { DbpfBinary } from './dbpf-binary.js';
 import { Tgi } from './types/tgi.js';
 import { ResourceInfo, OriginalPackageInfo, MergeMetadata, DeduplicatedMergeMetadata, UniqueResourceInfo, PackageSummary, MetadataError, PackageValidationInfo, SerializableTgi } from './types/metadata.js';
+import { METADATA_TGI } from './constants/metadata-tgi.js';
 
 /**
  * Load a package file and extract its metadata using S4TK validation and DBPF binary access.
@@ -124,11 +125,11 @@ export async function analyzePackagesForDeduplication(
     totalOriginalResources += pkg.resources.length;
 
     for (const resourceInfo of pkg.resources) {
-      // Skip resources with the reserved metadata TGI (0x12345678:0x87654321:0)
+      // Skip resources with the reserved metadata TGI
       // These should not be included in deduplication as they contain Sims 4 Power Tools metadata
-      if (resourceInfo.tgi.type === 0x12345678 &&
-          resourceInfo.tgi.group === 0x87654321 &&
-          resourceInfo.tgi.instance === 0n) {
+      if (resourceInfo.tgi.type === METADATA_TGI.type &&
+          resourceInfo.tgi.group === METADATA_TGI.group &&
+          resourceInfo.tgi.instance === METADATA_TGI.instance) {
         continue;
       }
 
