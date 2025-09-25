@@ -130,10 +130,10 @@ async function main() {
       }
 
       // Compare resource counts
-      if (metaPkg.resources.length === originalPkg.resources) {
-        console.log(`   Resources: ${metaPkg.resources.length} ✓`);
+      if (metaPkg.resourceCount === originalPkg.resources) {
+        console.log(`   Resources: ${metaPkg.resourceCount} ✓`);
       } else {
-        console.log(`   Resources: ${metaPkg.resources.length} (metadata) vs ${originalPkg.resources} (original) ❌`);
+        console.log(`   Resources: ${metaPkg.resourceCount} (metadata) vs ${originalPkg.resources} (original) ❌`);
         pkgValid = false;
       }
 
@@ -143,8 +143,16 @@ async function main() {
 
     console.log(`📊 Results: ${successCount}/${metadata.originalPackages.length} packages validated successfully`);
 
+    // Show deduplication statistics
+    const dedupRatio = metadata.uniqueResourceCount / metadata.totalOriginalResources;
+    console.log(`\n📈 Deduplication Summary:`);
+    console.log(`   Total original resources: ${metadata.totalOriginalResources}`);
+    console.log(`   Unique resources stored: ${metadata.uniqueResourceCount}`);
+    console.log(`   Deduplication ratio: ${(dedupRatio * 100).toFixed(1)}%`);
+    console.log(`   Duplicates eliminated: ${metadata.totalOriginalResources - metadata.uniqueResourceCount}`);
+
     if (successCount === metadata.originalPackages.length) {
-      console.log('🎉 Metadata validation PASSED! Merged package accurately represents source packages.');
+      console.log('🎉 Metadata validation PASSED! Merged package accurately represents source packages with deduplication.');
       process.exit(0);
     } else {
       console.log('⚠️ Metadata validation FAILED! Some packages do not match their metadata.');

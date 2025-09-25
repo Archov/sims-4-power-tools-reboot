@@ -34,7 +34,61 @@ export interface OriginalPackageInfo {
 }
 
 /**
+ * Information about a unique resource stored in the merged package.
+ * Resources are deduplicated by content hash, so each unique resource appears only once.
+ */
+export interface UniqueResourceInfo {
+  /** Type-Group-Instance identifier for this resource. */
+  readonly tgi: Tgi;
+  /** SHA256 hash of the raw compressed resource data. */
+  readonly contentHash: string;
+  /** Size of the compressed resource data in bytes. */
+  readonly size: number;
+  /** Compression flags from the resource index entry. */
+  readonly compressionFlags: number;
+  /** List of original package filenames that contained this resource. */
+  readonly sourcePackages: readonly string[];
+}
+
+/**
+ * Simplified metadata for an original package in a deduplicated merge.
+ */
+export interface PackageSummary {
+  /** Original filename of the package. */
+  readonly filename: string;
+  /** SHA256 hash of the entire original package file. */
+  readonly sha256: string;
+  /** Base64-encoded 96-byte header of the original package. */
+  readonly headerBytes: string;
+  /** Total number of resources in the original package. */
+  readonly resourceCount: number;
+  /** Total size of the original package file in bytes. */
+  readonly totalSize: number;
+}
+
+/**
+ * Complete metadata for a deduplicated merged package operation.
+ * Uses resource deduplication to eliminate redundant storage while preserving
+ * perfect unmerging capability through source package mappings.
+ */
+export interface DeduplicatedMergeMetadata {
+  /** Version identifier for the deduplicated merge format. */
+  readonly version: string;
+  /** Summary information for all original packages. */
+  readonly originalPackages: readonly PackageSummary[];
+  /** Information about each unique resource stored in the merged package. */
+  readonly uniqueResources: readonly UniqueResourceInfo[];
+  /** Total number of resources across all original packages (before deduplication). */
+  readonly totalOriginalResources: number;
+  /** Number of unique resources stored (after deduplication). */
+  readonly uniqueResourceCount: number;
+  /** ISO timestamp when the merge operation was performed. */
+  readonly mergedAt: string;
+}
+
+/**
  * Complete metadata for a merged package operation.
+ * @deprecated Use DeduplicatedMergeMetadata for new merges.
  */
 export interface MergeMetadata {
   /** Version identifier for the merge format. */

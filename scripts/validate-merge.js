@@ -91,6 +91,7 @@ async function main() {
     const json = data.toString('utf8');
     const metadata = JSON.parse(json);
     console.log(`✅ Metadata extracted: ${metadata.originalPackages.length} packages`);
+    console.log(`   Unique resources: ${metadata.uniqueResourceCount}/${metadata.totalOriginalResources} (${((metadata.uniqueResourceCount / metadata.totalOriginalResources) * 100).toFixed(1)}% deduplication)`);
   } catch (error) {
     console.log(`❌ Metadata validation failed: ${error.message}`);
     process.exit(1);

@@ -11,7 +11,7 @@ import { BinaryResource } from './types/binary-resource.js';
 import { DbpfBinaryStructure } from './types/dbpf-binary-structure.js';
 import { DbpfBinary } from './dbpf-binary.js';
 import { Tgi } from './types/tgi.js';
-import { ResourceInfo, OriginalPackageInfo, MergeMetadata, MetadataError, PackageValidationInfo } from './types/metadata.js';
+import { ResourceInfo, OriginalPackageInfo, MergeMetadata, DeduplicatedMergeMetadata, UniqueResourceInfo, PackageSummary, MetadataError, PackageValidationInfo } from './types/metadata.js';
 
 /**
  * Load a package file and extract its metadata using S4TK validation and DBPF binary access.
@@ -90,6 +90,89 @@ export function buildMergeMetadata(
   return {
     version,
     originalPackages: packages,
+    mergedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Analyze packages for deduplication and build deduplicated merge metadata.
+ * This function identifies duplicate resources by content hash and creates
+ * mappings of which packages contained each unique resource.
+ *
+ * @param packageFiles - Array of package file paths to analyze
+ * @returns Deduplicated merge metadata with resource mappings
+ */
+export async function analyzePackagesForDeduplication(
+  packageFiles: readonly string[]
+): Promise<DeduplicatedMergeMetadata> {
+  // Collect metadata from all packages
+  const packageMetadata = await collectPackagesMetadata(packageFiles);
+
+  // Build deduplication map: contentHash -> unique resource info + source packages
+  const deduplicationMap = new Map<string, {
+    resource: BinaryResource;
+    sourcePackages: string[];
+    tgi: Tgi;
+    size: number;
+    compressionFlags: number;
+  }>();
+
+  let totalOriginalResources = 0;
+
+  // Analyze each package and its resources
+  for (const pkg of packageMetadata) {
+    totalOriginalResources += pkg.resources.length;
+
+    for (const resourceInfo of pkg.resources) {
+      const contentHash = resourceInfo.rawDataHash;
+      const packageName = pkg.filename;
+
+      if (deduplicationMap.has(contentHash)) {
+        // Resource already exists, just add this package to the list
+        const existing = deduplicationMap.get(contentHash)!;
+        if (!existing.sourcePackages.includes(packageName)) {
+          existing.sourcePackages.push(packageName);
+        }
+      } else {
+        // First time seeing this resource, we need to get the actual binary data
+        // For now, we'll create a placeholder - this will be resolved when we merge
+        deduplicationMap.set(contentHash, {
+          resource: null as any, // Will be filled during merge
+          sourcePackages: [packageName],
+          tgi: resourceInfo.tgi,
+          size: 0, // Will be calculated during merge
+          compressionFlags: resourceInfo.compressionFlags,
+        });
+      }
+    }
+  }
+
+  // Convert to final format
+  const uniqueResources: UniqueResourceInfo[] = Array.from(deduplicationMap.entries()).map(
+    ([contentHash, data]) => ({
+      tgi: data.tgi,
+      contentHash,
+      size: data.size,
+      compressionFlags: data.compressionFlags,
+      sourcePackages: data.sourcePackages,
+    })
+  );
+
+  // Create package summaries
+  const packageSummaries: PackageSummary[] = packageMetadata.map(pkg => ({
+    filename: pkg.filename,
+    sha256: pkg.sha256,
+    headerBytes: pkg.headerBytes,
+    resourceCount: pkg.resources.length,
+    totalSize: pkg.totalSize,
+  }));
+
+  return {
+    version: "2.0-deduped",
+    originalPackages: packageSummaries,
+    uniqueResources,
+    totalOriginalResources,
+    uniqueResourceCount: uniqueResources.length,
     mergedAt: new Date().toISOString(),
   };
 }
