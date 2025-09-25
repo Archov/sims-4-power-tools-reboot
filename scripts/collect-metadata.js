@@ -73,10 +73,14 @@ async function main() {
 
     const metadata = await collectPackageMetadata(inputPath);
 
-    // Pretty print the metadata (handle BigInts for JSON serialization)
+    // Pretty print the metadata (handle BigInts and hex conversion for JSON serialization)
     const jsonOutput = JSON.stringify(metadata, (key, value) => {
       if (typeof value === 'bigint') {
-        return value.toString();
+        return '0x' + value.toString(16);
+      }
+      // Convert numbers in TGI objects to hex
+      if (typeof value === 'number' && key && (key === 'type' || key === 'group' || key === 'instance')) {
+        return '0x' + value.toString(16);
       }
       return value;
     }, 2);
