@@ -140,7 +140,7 @@ async function testPackage(inputPath, outputBase, inputStats) {
   if (headerMatch && fileHashMatch && dataIntegrityOK) {
     console.log('[round-trip-test] ✅ PERFECT ROUND-TRIP: Byte-identical reproduction');
     return 'perfect';
-  } else if (!headerMatch && dataIntegrityOK) {
+  } else if (!fileHashMatch && dataIntegrityOK) {
     console.log('[round-trip-test] 🔧 METADATA CORRECTED: Invalid metadata fixed, data integrity preserved');
     console.log(`[round-trip-test] Output package retained at ${outputPath} for inspection.`);
     return 'corrected';
