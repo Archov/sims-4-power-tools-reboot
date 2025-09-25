@@ -151,7 +151,7 @@ function writeResources(buffer: Buffer, resources: BinaryResource[]): void {
   }
 }
 
-function rebuildIndexTable(resources: BinaryResource[], indexFlags: number): Buffer {
+function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, dataStartOffset: number): Buffer {
   const indexSize = 4 + resources.length * INDEX_ENTRY_SIZE; // 4 for flags
   const buffer = Buffer.alloc(indexSize);
 
@@ -177,14 +177,14 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number): Buf
     // Data offset - encode based on index flags
     let dataOffsetValue: number;
     if (indexFlags === 4) {
-      // Encoded format: high bit set for relative offsets
-      const relativeOffset = resource.offset - 0x60;
-      dataOffsetValue = i === 0 ? resource.offset : (relativeOffset | 0x80000000);
-      // Ensure unsigned value for writeUInt32LE
-      dataOffsetValue = dataOffsetValue >>> 0;
+      const relativeOffset = resource.offset - dataStartOffset;
+      if (relativeOffset < 0) {
+        throw new DbpfBinaryError(`Resource offset ${resource.offset} precedes dataStartOffset ${dataStartOffset}`);
+      }
+      dataOffsetValue = i === 0 ? (resource.offset >>> 0) : ((relativeOffset | 0x80000000) >>> 0);
     } else {
       // Standard format: absolute offsets
-      dataOffsetValue = resource.offset;
+      dataOffsetValue = resource.offset >>> 0;
     }
     buffer.writeUInt32LE(dataOffsetValue, entryOffset + 16);
 
@@ -222,7 +222,7 @@ export class DbpfBinary {
       indexTableToUse = structure.indexTable;
     } else {
       // Need to rebuild index table for corrected resource count
-      indexTableToUse = rebuildIndexTable(structure.resources, structure.indexFlags);
+      indexTableToUse = rebuildIndexTable(structure.resources, structure.indexFlags, structure.dataStartOffset);
     }
 
     // Calculate new total size
