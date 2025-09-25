@@ -59,7 +59,7 @@ function readHeader(buffer: Buffer): Buffer {
  *
  * @param buffer - The complete DBPF file buffer
  * @returns An IndexMetadata object containing `indexFlags`, `entryCount`, `indexSize`, `indexOffset`, and `dataStartOffset`
- * @throws DbpfBinaryError if the index region extends beyond the file bounds
+ * @throws DbpfBinaryError if the index region is malformed or extends beyond file bounds
  */
 function readIndexMetadata(buffer: Buffer): IndexMetadata {
   const entryCount: number = buffer.readUInt32LE(INDEX_ENTRY_COUNT_OFFSET);
@@ -71,6 +71,13 @@ function readIndexMetadata(buffer: Buffer): IndexMetadata {
   // DBPF data section typically starts at 0x60 (96 bytes after header start)
   if (dataStartOffset === 0) {
     dataStartOffset = 0x60;
+  }
+  // Validate index region bounds and minimum size
+  if (indexOffset + 4 > buffer.length) {
+    throw new DbpfBinaryError('Index region too small to contain flags (need at least 4 bytes).');
+  }
+  if (indexSize < 4) {
+    throw new DbpfBinaryError(`Index too small to contain flags: indexSize=${indexSize}, minimum required=4.`);
   }
   if (indexOffset + indexSize > buffer.length) {
     throw new DbpfBinaryError('Index extends beyond file bounds.');
