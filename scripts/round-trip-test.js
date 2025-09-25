@@ -193,11 +193,15 @@ async function main() {
 
       if (result === 'perfect') successCount++;
       else if (result === 'corrected') correctionCount++;
-      else if (result === 'failure') failureCount++;
+      else if (result === 'failure') {
+        failureCount++;
+        process.exitCode = 1;
+      }
 
     } catch (error) {
       console.error(`Failed to test ${basename(packageFile)}: ${error.message}`);
       failureCount++;
+      process.exitCode = 1;
     }
     console.log('');
   }
