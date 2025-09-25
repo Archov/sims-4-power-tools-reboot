@@ -6,13 +6,12 @@
 |- **Deduplication** Automatic elimination of duplicate resources by content hash, with space savings of 50-70% typical.
 
 ## Prerequisites
-|- **Modules ready** 
-eadDbpfBinary() from src/dbpf-binary.ts and metadata helpers from src/metadata.ts.
-|- **Fixtures** Sample packages located under 	est-packages/ for manual spot-checks.
+|- **Modules ready**
+readDbpfBinary() from src/dbpf-binary.ts and metadata helpers from src/metadata.ts.
+|- **Fixtures** Sample packages located under test-packages/ for manual spot-checks.
 
 ## Steps
-|- **Enumerate inputs** Use 
-ode:fs utilities to list .package files within inputDir, skipping non-files.
+|- **Enumerate inputs** Use node:fs utilities to list .package files within inputDir, skipping non-files.
 |- **Analyze deduplication** Scan all packages to identify duplicate resources by SHA256 content hash.
 |- **Build deduplication map** Create mappings of which original packages contain each unique resource.
 |- **Assemble deduplicated structure** Store only unique resources in the merged package with proper offset calculation.
@@ -27,8 +26,7 @@ ode:fs utilities to list .package files within inputDir, skipping non-files.
 |- **Deduplication** Automatic resource deduplication by content hash (50-70% typical space savings).
 |- **Metadata accuracy** DeduplicatedMergeMetadata records original filenames, SHA256 digests, and resource-to-package mappings.
 |- **Perfect unmerging** Metadata contains sufficient information to reconstruct original packages exactly.
-|- **Byte preservation** No mutation of 
-awData buffers; compression flags and data remain untouched.
+|- **Byte preservation** No mutation of rawData buffers; compression flags and data remain untouched.
 |- **Space efficiency** Only unique resources stored once, regardless of duplication across packages.
 |- **Error handling** Meaningful errors for empty directories, inaccessible files, or DBPF validation failures.
 |- **Manual guidance** Step-by-step CLI commands for merging, validating deduplication, and round-trip testing.

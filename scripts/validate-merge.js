@@ -91,7 +91,9 @@ async function main() {
     const json = data.toString('utf8');
     const metadata = JSON.parse(json);
     console.log(`✅ Metadata extracted: ${metadata.originalPackages.length} packages`);
-    const reduction = (1 - (metadata.uniqueResourceCount / metadata.totalOriginalResources)) * 100;
+    const reduction = metadata.totalOriginalResources > 0
+      ? (1 - (metadata.uniqueResourceCount / metadata.totalOriginalResources)) * 100
+      : 0;
     console.log(`   Dedup reduction: ${reduction.toFixed(1)}% (${metadata.uniqueResourceCount}/${metadata.totalOriginalResources} unique/original)`);
   } catch (error) {
     console.error(`❌ Metadata validation failed: ${error instanceof Error ? error.message : String(error)}`);

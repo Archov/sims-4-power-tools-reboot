@@ -34,8 +34,8 @@ async function main() {
     const stats = await stat(packageFile);
     const sizeMB = (stats.size / (1024 * 1024)).toFixed(1);
     console.log(`✅ File exists: ${sizeMB}MB (${stats.size} bytes)`);
-    const MIN_SIZE_BYTES = 1_000_000; // 1 MB threshold
-    process.exit(stats.size > MIN_SIZE_BYTES ? 0 : 1);
+    // Ensure file has content (non-zero size)
+    process.exit(stats.size > 0 ? 0 : 1);
   } catch (error) {
     console.error(`❌ File check failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);

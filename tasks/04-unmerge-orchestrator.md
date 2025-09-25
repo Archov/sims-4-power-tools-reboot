@@ -45,16 +45,16 @@
 - **Resource Selection**: Must select appropriate unique resources using source package mappings
 - **Offset Recalculation**: Resources get new offsets in reconstructed packages vs. merged package
 - **Metadata Format**: Handles DeduplicatedMergeMetadata instead of simple package lists
-- **Space Efficiency**: Reconstructed packages may be smaller than originals if resources were deduplicated
+- **Space Efficiency**: Reconstructed packages must expand back to match the original byte-for-byte layout (resource count, order, size, and checksum)
 
 ## Manual QA Checklist
 - **Unmerge deduplicated package** Execute node dist/cli.js unmerge ./tmp/dedup-merged.package --out ./tmp/unmerged and confirm reconstruction.
 - **Hash comparison** Run validation scripts to verify SHA256 parity between originals and reconstructed packages.
 - **Resource mapping validation** Verify that each reconstructed package contains exactly the resources it originally had.
 - **Metadata integrity** Confirm deduplicated metadata resource is correctly parsed and utilized.
-- **Error handling** Attempt to unmerge non-deduplicated packages and ensure appropriate error handling.
+- **Error handling** Attempt to unmerge invalid inputs (non-merged packages) and ensure clear error messages.
 
 ## Notes
 - **Performance** Resource mapping lookups add complexity but enable perfect reconstruction.
 - **Extensibility** Design supports future selective unmerging (extract specific packages).
-- **Compatibility** Handles both deduplicated and non-deduplicated merge formats.
+- **Compatibility** Supports deduplicated merge metadata format produced by the merge tool.
