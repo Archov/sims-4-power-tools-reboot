@@ -146,7 +146,9 @@ function validatePackageMetadata(metadata, originalPackageMap) {
 
 function printDedupSummary(metadata) {
   const duplicatesEliminated = metadata.totalOriginalResources - metadata.uniqueResourceCount;
-  const dedupRatio = duplicatesEliminated / metadata.totalOriginalResources;
+  const dedupRatio = metadata.totalOriginalResources > 0
+    ? duplicatesEliminated / metadata.totalOriginalResources
+    : 0;
   console.log('\n📈 Deduplication Summary:');
   console.log(`   Total original resources: ${metadata.totalOriginalResources}`);
   console.log(`   Unique resources stored: ${metadata.uniqueResourceCount}`);
