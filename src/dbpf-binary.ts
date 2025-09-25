@@ -32,10 +32,11 @@ interface IndexMetadata {
 }
 
 /**
- * Validates DBPF file magic number.
- * @param buffer - File buffer to check
- * @param filePath - File path for error messages
- * @throws {DbpfBinaryError} If magic number is invalid
+ * Throw if the provided buffer does not start with the DBPF file magic.
+ *
+ * @param buffer - Buffer containing the file data to validate
+ * @param filePath - File path included in the error message when validation fails
+ * @throws {DbpfBinaryError} If the buffer's first four ASCII bytes are not the expected DBPF magic
  */
 function ensureMagic(buffer: Buffer, filePath: string): void {
   const magic: string = buffer.toString('ascii', 0, 4);
@@ -45,18 +46,20 @@ function ensureMagic(buffer: Buffer, filePath: string): void {
 }
 
 /**
- * Extracts the 96-byte DBPF header from a buffer.
- * @param buffer - File buffer
- * @returns Header buffer slice
+ * Return the first 96 bytes of a DBPF file buffer as the header.
+ *
+ * @returns A Buffer containing the DBPF header (the first 96 bytes of `buffer`). If `buffer` is shorter than 96 bytes, the returned slice contains the available bytes.
  */
 function readHeader(buffer: Buffer): Buffer {
   return buffer.subarray(0, HEADER_SIZE);
 }
 
 /**
- * Parses DBPF index metadata from the header.
- * @param buffer - File buffer
- * @returns Index metadata structure
+ * Read index-related fields from a DBPF file header and validate the index region.
+ *
+ * @param buffer - The complete DBPF file buffer
+ * @returns An IndexMetadata object containing `indexFlags`, `entryCount`, `indexSize`, `indexOffset`, and `dataStartOffset`
+ * @throws DbpfBinaryError if the index region extends beyond the file bounds
  */
 function readIndexMetadata(buffer: Buffer): IndexMetadata {
   const entryCount: number = buffer.readUInt32LE(INDEX_ENTRY_COUNT_OFFSET);
@@ -76,10 +79,24 @@ function readIndexMetadata(buffer: Buffer): IndexMetadata {
   return { indexFlags, entryCount, indexSize, indexOffset, dataStartOffset };
 }
 
+/**
+ * Produce a 64-bit instance identifier from two 32-bit parts.
+ *
+ * @param high - The upper 32 bits
+ * @param low - The lower 32 bits (treated as unsigned)
+ * @returns A `bigint` whose high 32 bits are `high` and low 32 bits are `low`
+ */
 function toInstance(high: number, low: number): bigint {
   return (BigInt(high) << 32n) | BigInt(low >>> 0);
 }
 
+/**
+ * Extracts a single DBPF index entry from a buffer.
+ *
+ * @param buffer - Source buffer containing DBPF data
+ * @param entryOffset - Byte offset of the index entry within `buffer`
+ * @returns A 32-byte buffer slice containing the index entry
+ */
 function readIndexEntry(buffer: Buffer, entryOffset: number): Buffer {
   return buffer.subarray(entryOffset, entryOffset + INDEX_ENTRY_SIZE);
 }
@@ -123,6 +140,16 @@ function parseResource(buffer: Buffer, entryOffset: number, dataStartOffset: num
   return { tgi, rawData, offset: dataOffset, originalOffset: dataOffset, compressionFlags, size: actualSize, uncompressedSize, sizeField, isCompressed, indexEntry };
 }
 
+/**
+ * Parses all valid resource entries from the index region and returns their BinaryResource objects.
+ *
+ * Iterates up to metadata.entryCount but stops early if entries would extend past the declared index region. Throws DbpfBinaryError when an entry's bytes extend beyond the file buffer.
+ *
+ * @param buffer - The complete DBPF file buffer containing header, index, and resource data.
+ * @param metadata - Index metadata containing `indexOffset`, `indexSize`, `entryCount`, and `dataStartOffset` used to locate and decode entries.
+ * @returns An array of parsed BinaryResource objects for each valid index entry.
+ * @throws DbpfBinaryError if an index entry extends beyond the provided buffer.
+ */
 function parseResources(buffer: Buffer, metadata: IndexMetadata): BinaryResource[] {
   const resources: BinaryResource[] = [];
   const indexDataStart: number = metadata.indexOffset + 4;
@@ -146,12 +173,11 @@ function parseResources(buffer: Buffer, metadata: IndexMetadata): BinaryResource
 }
 
 /**
- * Builds a complete DBPF structure from a file buffer.
- * Parses header, index, and all resources while correcting any metadata issues.
+ * Parse a DBPF file buffer and produce a complete DbpfBinaryStructure.
  *
- * @param buffer - File buffer to parse
- * @param filePath - Original file path for error messages and structure metadata
- * @returns Complete DBPF structure with corrected metadata
+ * @param buffer - The file contents to parse
+ * @param filePath - Original file path included in the resulting structure and used for error messages
+ * @returns A DbpfBinaryStructure containing the (possibly corrected) header, index table, parsed resources, SHA-256 of the original buffer, and related index/data offsets; the header's entry count is updated to match the parsed resources
  */
 function buildStructure(buffer: Buffer, filePath: string): DbpfBinaryStructure {
   ensureMagic(buffer, filePath);
@@ -182,6 +208,12 @@ function buildStructure(buffer: Buffer, filePath: string): DbpfBinaryStructure {
   };
 }
 
+/**
+ * Writes each resource's raw data into the given output buffer at the resource's specified offset.
+ *
+ * @param buffer - Destination buffer to write resource data into
+ * @param resources - Array of resources whose `rawData` will be copied into `buffer` at each resource's `offset`
+ */
 function writeResources(buffer: Buffer, resources: BinaryResource[]): void {
   for (const resource of resources) {
     resource.rawData.copy(buffer, resource.offset);
@@ -189,14 +221,18 @@ function writeResources(buffer: Buffer, resources: BinaryResource[]): void {
 }
 
 /**
- * Rebuilds a DBPF index table from resource data.
- * Handles different index formats based on flags and correctly encodes data offsets.
+ * Build a DBPF index table for the given resources, encoding offsets and metadata according to index flags.
  *
- * @param resources - Array of binary resources to index
- * @param indexFlags - DBPF index format flags (affects offset encoding)
- * @param dataStartOffset - Base offset for data section (used for relative offset calculation)
- * @returns Buffer containing the complete index table
- * @throws {DbpfBinaryError} If resource offsets are invalid relative to data start
+ * Encodes one 4-byte flags header followed by a 32-byte entry per resource. When `indexFlags` equals 4,
+ * the first entry uses an absolute data offset and subsequent entries use relative offsets with the high
+ * bit set; otherwise entries use absolute offsets. Sizes, uncompressed sizes, and compression flags are
+ * written from each resource's metadata.
+ *
+ * @param resources - Array of binary resources to include in the index
+ * @param indexFlags - DBPF index format flags that control how data offsets are encoded
+ * @param dataStartOffset - Base offset of the data section used to compute relative offsets when required
+ * @returns Buffer containing the complete index table (4-byte flags + N * 32-byte entries)
+ * @throws {DbpfBinaryError} If a resource's offset is before `dataStartOffset` when a relative offset is required
  */
 function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, dataStartOffset: number): Buffer {
   const indexSize = 4 + resources.length * INDEX_ENTRY_SIZE; // 4 for flags
