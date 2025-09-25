@@ -9,7 +9,8 @@
  */
 
 import { basename, dirname, join, resolve } from 'node:path';
-import { mkdir, stat, readdir } from 'node:fs/promises';
+import { mkdir, stat, readdir, access } from 'node:fs/promises';
+import { execSync } from 'node:child_process';
 import process from 'node:process';
 import { createHash } from 'node:crypto';
 
@@ -57,6 +58,30 @@ async function ensureInputExists(path) {
   } catch (error) {
     fail(`Input path not found: ${path}`);
     throw error;
+  }
+}
+
+/**
+ * Ensure the built DBPF binary module exists, building it if necessary.
+ */
+async function ensureBuiltModule() {
+  const distPath = resolve('dist', 'dbpf-binary.js');
+
+  try {
+    await access(distPath);
+    console.log('[round-trip-test] Found built module at dist/dbpf-binary.js');
+  } catch (error) {
+    console.log('[round-trip-test] Built module not found, running build...');
+    try {
+      execSync('npm run build', {
+        stdio: 'inherit',
+        cwd: resolve('.')
+      });
+      console.log('[round-trip-test] Build completed successfully');
+    } catch (buildError) {
+      fail(`Failed to build the project. Please run 'npm run build' manually and ensure it completes successfully.\nBuild error: ${buildError.message}`);
+      throw buildError;
+    }
   }
 }
 
@@ -165,6 +190,10 @@ async function main() {
     printHelp();
     return;
   }
+
+  // Ensure the built module exists before proceeding
+  await ensureBuiltModule();
+
   const inputPath = resolve(options.input);
   await ensureInputExists(inputPath);
   const inputStats = await stat(inputPath);
