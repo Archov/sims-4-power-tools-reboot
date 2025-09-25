@@ -73,7 +73,18 @@ export async function mergePackagesStandard(options: StandardMergerOptions): Pro
 
   // Generate and compress the manifest
   const uncompressedManifestData = StandardBinarySerializer.serialize(manifest);
+
+  // Validate manifest size
+  if (uncompressedManifestData.length > 50000000) { // 50MB limit
+    throw new Error(`Manifest too large: ${uncompressedManifestData.length.toLocaleString()} bytes. This suggests a bug in manifest generation.`);
+  }
+
   const compressedManifestData = await compressManifestData(uncompressedManifestData);
+
+  if (compressedManifestData.compressed.length > 100000000) { // 100MB compressed limit
+    throw new Error(`Compressed manifest too large: ${compressedManifestData.compressed.length.toLocaleString()} bytes. Aborting to prevent corruption.`);
+  }
+
   const manifestResource = createManifestResource(compressedManifestData, mergedStructure.resources);
 
   mergedStructure.resources.unshift(manifestResource);
@@ -430,9 +441,20 @@ function createManifestResource(manifestData: { compressed: Buffer; originalSize
 
   // Check if data is actually compressed
   const isCompressed = manifestData.compressed.length < manifestData.originalSize;
-  const sizeField = isCompressed
-    ? Number(BigInt(manifestData.compressed.length) | BigInt(0x80000000))
-    : manifestData.compressed.length;
+  let sizeField: number;
+  if (isCompressed) {
+    const result = BigInt(manifestData.compressed.length) | BigInt(0x80000000);
+    // Ensure it fits in 32-bit signed range for JavaScript compatibility
+    const clamped = result & BigInt(0xFFFFFFFF);
+    sizeField = Number(clamped);
+  } else {
+    sizeField = manifestData.compressed.length;
+  }
+
+  // Debug logging for large manifests
+  if (manifestData.compressed.length > 1000000) { // > 1MB
+    console.log(`Large manifest detected: ${manifestData.compressed.length.toLocaleString()} bytes compressed, ${manifestData.originalSize.toLocaleString()} bytes original`);
+  }
 
   return {
     tgi: {
