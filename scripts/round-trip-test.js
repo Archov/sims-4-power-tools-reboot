@@ -99,6 +99,15 @@ function getOutputPathForFile(inputPath, outputBase, inputStats) {
   }
 }
 
+/**
+ * Tests a single DBPF package for round-trip fidelity.
+ * Reads, writes, and validates the package structure.
+ *
+ * @param {string} inputPath - Path to the package file to test
+ * @param {string} outputBase - Base output directory path
+ * @param {object} inputStats - File stats for the input path
+ * @returns {string} Test result: 'perfect', 'corrected', or 'failure'
+ */
 async function testPackage(inputPath, outputBase, inputStats) {
   const outputPath = getOutputPathForFile(inputPath, outputBase, inputStats);
 
@@ -146,6 +155,10 @@ async function testPackage(inputPath, outputBase, inputStats) {
   }
 }
 
+/**
+ * Main entry point for the DBPF round-trip test utility.
+ * Supports testing individual files or entire directories of packages.
+ */
 async function main() {
   const options = parseArgs();
   if (options.help || !options.input) {

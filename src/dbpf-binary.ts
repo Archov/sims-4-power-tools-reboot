@@ -31,6 +31,12 @@ interface IndexMetadata {
   readonly dataStartOffset: number;
 }
 
+/**
+ * Validates DBPF file magic number.
+ * @param buffer - File buffer to check
+ * @param filePath - File path for error messages
+ * @throws {DbpfBinaryError} If magic number is invalid
+ */
 function ensureMagic(buffer: Buffer, filePath: string): void {
   const magic: string = buffer.toString('ascii', 0, 4);
   if (magic !== DBPF_MAGIC) {
@@ -38,10 +44,20 @@ function ensureMagic(buffer: Buffer, filePath: string): void {
   }
 }
 
+/**
+ * Extracts the 96-byte DBPF header from a buffer.
+ * @param buffer - File buffer
+ * @returns Header buffer slice
+ */
 function readHeader(buffer: Buffer): Buffer {
   return buffer.subarray(0, HEADER_SIZE);
 }
 
+/**
+ * Parses DBPF index metadata from the header.
+ * @param buffer - File buffer
+ * @returns Index metadata structure
+ */
 function readIndexMetadata(buffer: Buffer): IndexMetadata {
   const entryCount: number = buffer.readUInt32LE(INDEX_ENTRY_COUNT_OFFSET);
   const indexSize: number = buffer.readUInt32LE(INDEX_SIZE_OFFSET);
@@ -68,6 +84,16 @@ function readIndexEntry(buffer: Buffer, entryOffset: number): Buffer {
   return buffer.subarray(entryOffset, entryOffset + INDEX_ENTRY_SIZE);
 }
 
+/**
+ * Parses a single DBPF index entry into a BinaryResource structure.
+ * Handles encoded data offsets and bounds checking.
+ *
+ * @param buffer - File buffer
+ * @param entryOffset - Offset to the index entry in the buffer
+ * @param dataStartOffset - Base offset for data section (typically 0x60)
+ * @returns Parsed binary resource with TGI, data, and metadata
+ * @throws {DbpfBinaryError} If resource data extends beyond file bounds
+ */
 function parseResource(buffer: Buffer, entryOffset: number, dataStartOffset: number): BinaryResource {
   const type: number = buffer.readUInt32LE(entryOffset);
   const group: number = buffer.readUInt32LE(entryOffset + 4);
@@ -116,6 +142,14 @@ function parseResources(buffer: Buffer, metadata: IndexMetadata): BinaryResource
   return resources;
 }
 
+/**
+ * Builds a complete DBPF structure from a file buffer.
+ * Parses header, index, and all resources while correcting any metadata issues.
+ *
+ * @param buffer - File buffer to parse
+ * @param filePath - Original file path for error messages and structure metadata
+ * @returns Complete DBPF structure with corrected metadata
+ */
 function buildStructure(buffer: Buffer, filePath: string): DbpfBinaryStructure {
   ensureMagic(buffer, filePath);
   const header: Buffer = readHeader(buffer);
@@ -151,6 +185,16 @@ function writeResources(buffer: Buffer, resources: BinaryResource[]): void {
   }
 }
 
+/**
+ * Rebuilds a DBPF index table from resource data.
+ * Handles different index formats based on flags and correctly encodes data offsets.
+ *
+ * @param resources - Array of binary resources to index
+ * @param indexFlags - DBPF index format flags (affects offset encoding)
+ * @param dataStartOffset - Base offset for data section (used for relative offset calculation)
+ * @returns Buffer containing the complete index table
+ * @throws {DbpfBinaryError} If resource offsets are invalid relative to data start
+ */
 function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, dataStartOffset: number): Buffer {
   const indexSize = 4 + resources.length * INDEX_ENTRY_SIZE; // 4 for flags
   const buffer = Buffer.alloc(indexSize);
@@ -202,9 +246,22 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, data
 }
 
 
+/**
+ * DBPF (Sims 4 Package File) binary processing utilities.
+ * Provides low-level operations for reading, writing, and manipulating DBPF package structures.
+ */
 export class DbpfBinary {
+  /** Error class for DBPF-specific exceptions. */
   static readonly Error: typeof DbpfBinaryError = DbpfBinaryError;
 
+  /**
+   * Reads a DBPF package from disk and parses its structure.
+   * Automatically corrects invalid metadata (e.g., wrong entry counts) while preserving data integrity.
+   *
+   * @param filePath - Path to the DBPF package file
+   * @returns Parsed package structure with all resources and metadata
+   * @throws {DbpfBinaryError} If file is not a valid DBPF package or cannot be read
+   */
   static async read({ filePath }: { readonly filePath: string }): Promise<DbpfBinaryStructure> {
     const buffer: Buffer = await readFile(filePath);
     if (buffer.length < HEADER_SIZE) {
@@ -213,6 +270,14 @@ export class DbpfBinary {
     return buildStructure(buffer, filePath);
   }
 
+  /**
+   * Writes a DBPF package structure to disk.
+   * Rebuilds index tables as needed and corrects any metadata inconsistencies.
+   *
+   * @param structure - Parsed DBPF structure to write
+   * @param outputPath - Path where the package file should be written
+   * @throws {DbpfBinaryError} If writing fails or structure is invalid
+   */
   static async write({ structure, outputPath }: { readonly structure: DbpfBinaryStructure; readonly outputPath: string }): Promise<void> {
     // Use original index table if it matches the resource count, otherwise rebuild
     let indexTableToUse: Buffer;
@@ -247,11 +312,24 @@ export class DbpfBinary {
     await writeFile(outputPath, buffer);
   }
 
+  /**
+   * Extracts raw resource data for a specific TGI (Type-Group-Instance) identifier.
+   *
+   * @param structure - Parsed DBPF structure
+   * @param tgi - TGI identifier to search for
+   * @returns Raw resource data buffer, or null if resource not found
+   */
   static extractResource({ structure, tgi }: { readonly structure: DbpfBinaryStructure; readonly tgi: Tgi }): Buffer | null {
     const match: BinaryResource | undefined = structure.resources.find((resource: BinaryResource) => resource.tgi.type === tgi.type && resource.tgi.group === tgi.group && resource.tgi.instance === tgi.instance);
     return match ? Buffer.from(match.rawData) : null;
   }
 
+  /**
+   * Computes SHA256 hash of raw resource data.
+   *
+   * @param resourceData - Raw resource data buffer
+   * @returns Hexadecimal SHA256 hash string
+   */
   static hashResourceData({ resourceData }: { readonly resourceData: Buffer }): string {
     return createHash('sha256').update(resourceData).digest('hex');
   }
