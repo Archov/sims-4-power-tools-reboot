@@ -55,7 +55,7 @@ async function main() {
     await mergePackages(resolvedInput, resolvedOutput);
     console.log('✅ Merge operation completed successfully');
   } catch (error) {
-    console.log(`❌ Merge operation failed: ${error.message}`);
+    console.error(`❌ Merge operation failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
 
@@ -66,7 +66,7 @@ async function main() {
     const sizeMB = (stats.size / (1024 * 1024)).toFixed(1);
     console.log(`✅ File exists: ${sizeMB}MB`);
   } catch (error) {
-    console.log(`❌ File check failed: ${error.message}`);
+    console.error(`❌ File check failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
 
@@ -76,7 +76,7 @@ async function main() {
     const structure = await DbpfBinary.read({ filePath: resolvedOutput });
     console.log(`✅ Valid DBPF: ${structure.resources.length} resources`);
   } catch (error) {
-    console.log(`❌ DBPF validation failed: ${error.message}`);
+    console.error(`❌ DBPF validation failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
 
@@ -91,11 +91,10 @@ async function main() {
     const json = data.toString('utf8');
     const metadata = JSON.parse(json);
     console.log(`✅ Metadata extracted: ${metadata.originalPackages.length} packages`);
-    const duplicatesEliminated = metadata.totalOriginalResources - metadata.uniqueResourceCount;
-    const dedupRatio = metadata.totalOriginalResources > 0 ? (duplicatesEliminated / metadata.totalOriginalResources) * 100 : 0;
-    console.log(`   Unique resources: ${metadata.uniqueResourceCount}/${metadata.totalOriginalResources} (${dedupRatio.toFixed(1)}% deduplication)`);
+    const reduction = (1 - (metadata.uniqueResourceCount / metadata.totalOriginalResources)) * 100;
+    console.log(`   Dedup reduction: ${reduction.toFixed(1)}% (${metadata.uniqueResourceCount}/${metadata.totalOriginalResources} unique/original)`);
   } catch (error) {
-    console.log(`❌ Metadata validation failed: ${error.message}`);
+    console.error(`❌ Metadata validation failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
 

@@ -75,7 +75,7 @@ export interface PackageSummary {
  */
 export interface DeduplicatedMergeMetadata {
   /** Version identifier for the deduplicated merge format. */
-  readonly version: string;
+  readonly version: "2.0-deduped";
   /** Summary information for all original packages. */
   readonly originalPackages: readonly PackageSummary[];
   /** Information about each unique resource stored in the merged package. */

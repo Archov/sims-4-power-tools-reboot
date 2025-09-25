@@ -42,6 +42,11 @@ async function main() {
     const metadata = JSON.parse(json);
     console.log(`✅ Metadata extracted: ${metadata.originalPackages.length} packages`);
 
+    if (metadata.version !== '2.0-deduped') {
+      console.log(`❌ Unexpected metadata version: ${metadata.version}`);
+      process.exit(1);
+    }
+
     // Show a sample of the metadata
     if (metadata.originalPackages.length > 0) {
       const sample = metadata.originalPackages[0];
@@ -50,7 +55,7 @@ async function main() {
 
     process.exit(metadata.originalPackages.length > 0 ? 0 : 1);
   } catch (error) {
-    console.log(`❌ Metadata validation failed: ${error.message}`);
+    console.error(`❌ Metadata validation failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
 }

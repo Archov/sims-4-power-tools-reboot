@@ -40,14 +40,127 @@ This validation:
 async function enumeratePackageFiles(directoryPath) {
   const entries = await readdir(directoryPath, { withFileTypes: true });
   const packageFiles = [];
-
   for (const entry of entries) {
     if (entry.isFile() && extname(entry.name).toLowerCase() === '.package') {
       packageFiles.push(resolve(directoryPath, entry.name));
     }
   }
-
   return packageFiles.sort();
+}
+
+async function extractMergedMetadata(resolvedMerged) {
+  console.log('📋 1. Extracting metadata from merged package...');
+  const metadataBuffer = await extractResourceData(resolvedMerged, METADATA_TGI);
+  if (!metadataBuffer) {
+    console.log('❌ No metadata resource found in merged package');
+    process.exit(1);
+  }
+  const metadataJson = metadataBuffer.toString('utf8');
+  const metadata = JSON.parse(metadataJson);
+  console.log(`✅ Found metadata for ${metadata.originalPackages.length} original packages\n`);
+  return metadata;
+}
+
+async function listOriginalPackages(resolvedOriginalDir) {
+  console.log('📂 2. Scanning original package directory...');
+  const allOriginalPackages = await enumeratePackageFiles(resolvedOriginalDir);
+  console.log(`✅ Found ${allOriginalPackages.length} total package files`);
+  const validOriginalPackages = [];
+  for (const pkgPath of allOriginalPackages) {
+    try {
+      const structure = await DbpfBinary.read({ filePath: pkgPath });
+      const hasMetadataResource = structure.resources.some(resource =>
+        resource.tgi.type === 0x12345678 &&
+        resource.tgi.group === 0x87654321 &&
+        resource.tgi.instance === 0n
+      );
+      if (hasMetadataResource) {
+        console.log(`   Excluding previously merged package: ${basename(pkgPath)}`);
+      } else {
+        validOriginalPackages.push(pkgPath);
+      }
+    } catch (error) {
+      console.log(`   Error reading ${basename(pkgPath)}: ${error.message}`);
+      process.exit(1);
+    }
+  }
+  console.log(`✅ Found ${validOriginalPackages.length} valid original package files (excluded ${allOriginalPackages.length - validOriginalPackages.length} previously merged packages)\n`);
+  return validOriginalPackages;
+}
+
+function validatePackageCounts(metadata, originalPackages) {
+  console.log('🔍 3. Validating package counts...');
+  if (metadata.originalPackages.length !== originalPackages.length) {
+    console.log(`❌ Mismatch: metadata lists ${metadata.originalPackages.length} packages, but found ${originalPackages.length} in directory`);
+    process.exit(1);
+  }
+  console.log('✅ Package counts match\n');
+}
+
+async function loadOriginalPackageMap(originalPackages) {
+  const map = new Map();
+  for (const pkgPath of originalPackages) {
+    const filename = basename(pkgPath);
+    const structure = await DbpfBinary.read({ filePath: pkgPath });
+    map.set(filename, {
+      path: pkgPath,
+      sha256: structure.sha256,
+      resources: structure.resources.length
+    });
+  }
+  return map;
+}
+
+function validatePackageMetadata(metadata, originalPackageMap) {
+  console.log('🔄 4. Validating metadata integrity...');
+  let successCount = 0;
+  for (const metaPkg of metadata.originalPackages) {
+    const originalPkg = originalPackageMap.get(metaPkg.filename);
+    if (!originalPkg) {
+      console.log(`❌ Original package not found: ${metaPkg.filename}`);
+      continue;
+    }
+    let pkgValid = true;
+    if (metaPkg.sha256 === originalPkg.sha256) {
+      console.log(`✅ ${metaPkg.filename}: hash match`);
+    } else {
+      console.log(`❌ ${metaPkg.filename}: hash mismatch`);
+      console.log(`   Original: ${originalPkg.sha256.slice(0, 16)}...`);
+      console.log(`   Metadata: ${metaPkg.sha256.slice(0, 16)}...`);
+      pkgValid = false;
+    }
+    if (metaPkg.resourceCount === originalPkg.resources) {
+      console.log(`   Resources: ${metaPkg.resourceCount} ✓`);
+    } else {
+      console.log(`   Resources: ${metaPkg.resourceCount} (metadata) vs ${originalPkg.resources} (original) ❌`);
+      pkgValid = false;
+    }
+    if (pkgValid) {
+      successCount++;
+    }
+    console.log('');
+  }
+  console.log(`📊 Results: ${successCount}/${metadata.originalPackages.length} packages validated successfully`);
+  return successCount;
+}
+
+function printDedupSummary(metadata) {
+  const duplicatesEliminated = metadata.totalOriginalResources - metadata.uniqueResourceCount;
+  const dedupRatio = duplicatesEliminated / metadata.totalOriginalResources;
+  console.log('\n📈 Deduplication Summary:');
+  console.log(`   Total original resources: ${metadata.totalOriginalResources}`);
+  console.log(`   Unique resources stored: ${metadata.uniqueResourceCount}`);
+  console.log(`   Deduplication ratio: ${(dedupRatio * 100).toFixed(1)}%`);
+  console.log(`   Duplicates eliminated: ${duplicatesEliminated}`);
+}
+
+function finalizeExit(successCount, totalPackages) {
+  if (successCount === totalPackages) {
+    console.log('🎉 Metadata validation PASSED! Merged package accurately represents source packages with deduplication.');
+    process.exit(0);
+  }
+  console.error('⚠️ Metadata validation FAILED! Some packages do not match their metadata.');
+  process.exit(1);
 }
 
 async function main() {
@@ -67,125 +180,15 @@ async function main() {
   console.log(`Original directory: ${resolvedOriginalDir}\n`);
 
   try {
-    // 1. Extract metadata from merged package
-    console.log('📋 1. Extracting metadata from merged package...');
-    const metadataBuffer = await extractResourceData(resolvedMerged, METADATA_TGI);
-    if (!metadataBuffer) {
-      console.log('❌ No metadata resource found in merged package');
-      process.exit(1);
-    }
-
-    const metadataJson = metadataBuffer.toString('utf8');
-    const metadata = JSON.parse(metadataJson);
-    console.log(`✅ Found metadata for ${metadata.originalPackages.length} original packages\n`);
-
-    // 2. Get list of original packages and filter out previously merged ones
-    console.log('📂 2. Scanning original package directory...');
-    const allOriginalPackages = await enumeratePackageFiles(resolvedOriginalDir);
-    console.log(`✅ Found ${allOriginalPackages.length} total package files`);
-
-    // Filter out packages that contain our metadata resource (previously merged packages)
-    const validOriginalPackages = [];
-    for (const pkgPath of allOriginalPackages) {
-      try {
-        const structure = await DbpfBinary.read({ filePath: pkgPath });
-        const hasMetadataResource = structure.resources.some(resource =>
-          resource.tgi.type === 0x12345678 &&
-          resource.tgi.group === 0x87654321 &&
-          resource.tgi.instance === 0n
-        );
-
-        if (hasMetadataResource) {
-          console.log(`   Excluding previously merged package: ${basename(pkgPath)}`);
-        } else {
-          validOriginalPackages.push(pkgPath);
-        }
-      } catch (error) {
-        console.log(`   Error reading ${basename(pkgPath)}: ${error.message}`);
-        process.exit(1);
-      }
-    }
-
-    console.log(`✅ Found ${validOriginalPackages.length} valid original package files (excluded ${allOriginalPackages.length - validOriginalPackages.length} previously merged packages)\n`);
-
-    // 3. Compare package counts
-    console.log('🔍 3. Validating package counts...');
-    if (metadata.originalPackages.length !== validOriginalPackages.length) {
-      console.log(`❌ Mismatch: metadata lists ${metadata.originalPackages.length} packages, but found ${validOriginalPackages.length} valid packages in directory`);
-      process.exit(1);
-    }
-    console.log('✅ Package counts match\n');
-
-    // 4. Validate each original package metadata
-    console.log('🔄 4. Validating metadata integrity...');
-    let successCount = 0;
-    const originalPackageMap = new Map();
-
-    // Create lookup map of valid original packages by filename
-    for (const pkgPath of validOriginalPackages) {
-      const filename = basename(pkgPath);
-      const structure = await DbpfBinary.read({ filePath: pkgPath });
-      originalPackageMap.set(filename, {
-        path: pkgPath,
-        sha256: structure.sha256,
-        resources: structure.resources.length
-      });
-    }
-
-    // Compare each package from metadata against originals
-    for (const metaPkg of metadata.originalPackages) {
-      const originalPkg = originalPackageMap.get(metaPkg.filename);
-
-      if (!originalPkg) {
-        console.log(`❌ Original package not found: ${metaPkg.filename}`);
-        continue;
-      }
-
-      let pkgValid = true;
-
-      // Compare SHA256 hashes
-      if (metaPkg.sha256 === originalPkg.sha256) {
-        console.log(`✅ ${metaPkg.filename}: hash match`);
-      } else {
-        console.log(`❌ ${metaPkg.filename}: hash mismatch`);
-        console.log(`   Original: ${originalPkg.sha256.slice(0, 16)}...`);
-        console.log(`   Metadata: ${metaPkg.sha256.slice(0, 16)}...`);
-        pkgValid = false;
-      }
-
-      // Compare resource counts
-      if (metaPkg.resourceCount === originalPkg.resources) {
-        console.log(`   Resources: ${metaPkg.resourceCount} ✓`);
-      } else {
-        console.log(`   Resources: ${metaPkg.resourceCount} (metadata) vs ${originalPkg.resources} (original) ❌`);
-        pkgValid = false;
-      }
-
-      if (pkgValid) successCount++;
-      console.log('');
-    }
-
-    console.log(`📊 Results: ${successCount}/${metadata.originalPackages.length} packages validated successfully`);
-
-    // Show deduplication statistics
-    const duplicatesEliminated = metadata.totalOriginalResources - metadata.uniqueResourceCount;
-    const dedupRatio = duplicatesEliminated / metadata.totalOriginalResources;
-    console.log(`\n📈 Deduplication Summary:`);
-    console.log(`   Total original resources: ${metadata.totalOriginalResources}`);
-    console.log(`   Unique resources stored: ${metadata.uniqueResourceCount}`);
-    console.log(`   Deduplication ratio: ${(dedupRatio * 100).toFixed(1)}%`);
-    console.log(`   Duplicates eliminated: ${duplicatesEliminated}`);
-
-    if (successCount === metadata.originalPackages.length) {
-      console.log('🎉 Metadata validation PASSED! Merged package accurately represents source packages with deduplication.');
-      process.exit(0);
-    } else {
-      console.log('⚠️ Metadata validation FAILED! Some packages do not match their metadata.');
-      process.exit(1);
-    }
-
+    const metadata = await extractMergedMetadata(resolvedMerged);
+    const originalPackages = await listOriginalPackages(resolvedOriginalDir);
+    validatePackageCounts(metadata, originalPackages);
+    const originalPackageMap = await loadOriginalPackageMap(originalPackages);
+    const successCount = validatePackageMetadata(metadata, originalPackageMap);
+    printDedupSummary(metadata);
+    finalizeExit(successCount, metadata.originalPackages.length);
   } catch (error) {
-    console.log(`❌ Validation failed: ${error.message}`);
+    console.error(`❌ Validation failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
 }

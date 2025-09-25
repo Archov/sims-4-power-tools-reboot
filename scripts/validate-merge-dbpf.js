@@ -35,7 +35,7 @@ async function main() {
     console.log(`✅ Valid DBPF: ${structure.resources.length} resources, ${structure.totalSize} bytes`);
     process.exit(structure.resources.length > 0 ? 0 : 1);
   } catch (error) {
-    console.log(`❌ DBPF validation failed: ${error.message}`);
+    console.error(`❌ DBPF validation failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
 }

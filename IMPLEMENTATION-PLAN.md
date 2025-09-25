@@ -94,6 +94,8 @@ async function mergePackages(inputDir: string, outputFile: string): Promise<void
 7. Verify perfect unmerging capability through metadata mappings
 8. Provide manual QA checklist for deduplication validation and round-trip testing.
 
+**Note:** Metadata must include per-package TGI occurrences and JSON-safe TGI (string instance) to avoid BigInt serialization issues.
+
 ### Phase 3: Unmerge Implementation (2-3 hours)
 **File: `src/unmerge.ts`**
 
