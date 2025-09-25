@@ -82,12 +82,13 @@ async function assembleDeduplicatedStructure(
 
   const mergedResources: BinaryResource[] = [];
 
-  // Process each unique resource and find its binary data from source packages
+  // Build content hash -> data mapping for deduplication
+  const contentHashToData = new Map<string, { resource: BinaryResource; offset: number }>();
   let currentOffset = baseStructure.dataStartOffset; // Start after header
 
+  // Process each unique resource to store its data once
   for (const uniqueResource of dedupMetadata.uniqueResources) {
-    // Find the actual binary resource data from one of the source packages
-    // We'll use the first occurrence (sha256 disambiguates duplicates)
+    // Find the source resource data
     const sourcePackageSha256 = uniqueResource.occurrences[0].packageSha256;
     const sourcePackagePath = sha256ToPathMap.get(sourcePackageSha256);
 
@@ -101,8 +102,6 @@ async function assembleDeduplicatedStructure(
       throw new Error(`Source package "${sourcePackageSha256}" not found for resource ${uniqueResource.tgi.type}:${uniqueResource.tgi.group}:${uniqueResource.tgi.instance}`);
     }
 
-    // Find the resource in the source package by TGI using optimized lookup
-    // Convert SerializableTgi back to Tgi for lookup
     const tgiForLookup: Tgi = {
       type: uniqueResource.tgi.type,
       group: uniqueResource.tgi.group,
@@ -115,22 +114,44 @@ async function assembleDeduplicatedStructure(
       throw new Error(`Resource ${uniqueResource.tgi.type}:${uniqueResource.tgi.group}:${uniqueResource.tgi.instance} not found in source package "${sourcePackageSha256}"`);
     }
 
-    // Create the merged resource with updated offset
-    const mergedResource: BinaryResource = {
-      ...sourceResource,
-      offset: currentOffset,
-      originalOffset: sourceResource.originalOffset,
-    };
+    // Store the deduplicated data location
+    contentHashToData.set(uniqueResource.contentHash, {
+      resource: sourceResource,
+      offset: currentOffset
+    });
 
-    mergedResources.push(mergedResource);
     currentOffset += sourceResource.size;
+  }
+
+  // Create index entries for ALL original TGIs, pointing to deduplicated data
+  for (const uniqueResource of dedupMetadata.uniqueResources) {
+    const { resource: sourceResource, offset: dataOffset } = contentHashToData.get(uniqueResource.contentHash)!;
+
+    // Create one BinaryResource per original TGI occurrence, all pointing to the same deduplicated data
+    for (const occurrence of uniqueResource.occurrences) {
+      const occurrenceTgi: Tgi = {
+        type: occurrence.tgi.type,
+        group: occurrence.tgi.group,
+        instance: BigInt(occurrence.tgi.instance),
+      };
+
+      // Create index entry for this TGI, pointing to deduplicated data
+      const mergedResource: BinaryResource = {
+        ...sourceResource,
+        tgi: occurrenceTgi,  // Original TGI
+        offset: dataOffset,   // Points to deduplicated data location
+        originalOffset: sourceResource.originalOffset,
+      };
+
+      mergedResources.push(mergedResource);
+    }
   }
 
   // Create merged structure
   const mergedStructure: DbpfBinaryStructure = {
     filePath: '', // Will be set when writing
     header: Buffer.from(baseStructure.header), // Copy the header
-    resources: mergedResources,
+    resources: mergedResources,  // Now contains one entry per original TGI
     indexTable: Buffer.alloc(0), // Will be rebuilt when writing
     totalSize: 0, // Will be calculated when writing
     sha256: '', // Will be calculated when writing
