@@ -253,39 +253,57 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, data
     const resource = resources[i];
     const entryOffset = 4 + i * INDEX_ENTRY_SIZE;
 
-    // Reconstruct the TGI
-    const type = resource.tgi.type;
-    const group = resource.tgi.group;
-    const instanceHigh = Number(resource.tgi.instance >> 32n);
-    const instanceLow = Number(resource.tgi.instance & 0xFFFFFFFFn);
+    // If we have original indexEntry data, preserve it and only update the offset
+    if (resource.indexEntry && resource.indexEntry.length >= 32 && resource.indexEntry.some(b => b !== 0)) {
+      // Copy the original index entry
+      resource.indexEntry.copy(buffer, entryOffset, 0, 32);
 
-    buffer.writeUInt32LE(type, entryOffset);
-    buffer.writeUInt32LE(group, entryOffset + 4);
-    buffer.writeUInt32LE(instanceHigh, entryOffset + 8);
-    buffer.writeUInt32LE(instanceLow, entryOffset + 12);
-
-    // Data offset - encode based on index flags
-    let dataOffsetValue: number;
-    if (indexFlags === 4) {
-      const relativeOffset = resource.offset - dataStartOffset;
-      if (relativeOffset < 0) {
-        throw new DbpfBinaryError(`Resource offset ${resource.offset} precedes dataStartOffset ${dataStartOffset}`);
+      // Update only the offset field (bytes 16-19)
+      let dataOffsetValue: number;
+      if (indexFlags === 4) {
+        const relativeOffset = resource.offset - dataStartOffset;
+        if (relativeOffset < 0) {
+          throw new DbpfBinaryError(`Resource offset ${resource.offset} precedes dataStartOffset ${dataStartOffset}`);
+        }
+        dataOffsetValue = i === 0 ? (resource.offset >>> 0) : ((relativeOffset | 0x80000000) >>> 0);
+      } else {
+        // Standard format: absolute offsets
+        dataOffsetValue = resource.offset >>> 0;
       }
-      dataOffsetValue = i === 0 ? (resource.offset >>> 0) : ((relativeOffset | 0x80000000) >>> 0);
+      buffer.writeUInt32LE(dataOffsetValue, entryOffset + 16);
+
+      // Update size field if it has changed
+      buffer.writeUInt32LE(resource.sizeField, entryOffset + 20);
     } else {
-      // Standard format: absolute offsets
-      dataOffsetValue = resource.offset >>> 0;
+      // Reconstruct the entry from scratch (fallback)
+      const type = resource.tgi.type;
+      const group = resource.tgi.group;
+      const instanceHigh = Number(resource.tgi.instance >> 32n);
+      const instanceLow = Number(resource.tgi.instance & 0xFFFFFFFFn);
+
+      buffer.writeUInt32LE(type, entryOffset);
+      buffer.writeUInt32LE(group, entryOffset + 4);
+      buffer.writeUInt32LE(instanceHigh, entryOffset + 8);
+      buffer.writeUInt32LE(instanceLow, entryOffset + 12);
+
+      // Data offset
+      let dataOffsetValue: number;
+      if (indexFlags === 4) {
+        const relativeOffset = resource.offset - dataStartOffset;
+        if (relativeOffset < 0) {
+          throw new DbpfBinaryError(`Resource offset ${resource.offset} precedes dataStartOffset ${dataStartOffset}`);
+        }
+        dataOffsetValue = i === 0 ? (resource.offset >>> 0) : ((relativeOffset | 0x80000000) >>> 0);
+      } else {
+        dataOffsetValue = resource.offset >>> 0;
+      }
+      buffer.writeUInt32LE(dataOffsetValue, entryOffset + 16);
+
+      buffer.writeUInt32LE(resource.sizeField, entryOffset + 20);
+      buffer.writeUInt32LE(resource.uncompressedSize, entryOffset + 24);
+      buffer.writeUInt16LE(resource.compressionFlags, entryOffset + 28);
+      buffer.writeUInt16LE(0x0000, entryOffset + 30);
     }
-    buffer.writeUInt32LE(dataOffsetValue, entryOffset + 16);
-
-    // Size field - use the original parsed value
-    buffer.writeUInt32LE(resource.sizeField, entryOffset + 20);
-
-    // Uncompressed size
-    buffer.writeUInt32LE(resource.uncompressedSize, entryOffset + 24);
-
-    // Compression flags
-    buffer.writeUInt16LE(resource.compressionFlags, entryOffset + 28);
   }
 
   return buffer;
