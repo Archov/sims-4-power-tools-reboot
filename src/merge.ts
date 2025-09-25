@@ -56,16 +56,10 @@ async function assembleDeduplicatedStructure(
 ): Promise<DbpfBinaryStructure> {
   // Read all package structures to access the actual binary data
   const packageStructures = new Map<string, DbpfBinaryStructure>();
-  const filenameToPathMap = new Map<string, string>();
   const sha256ToPathMap = new Map<string, string>();
   for (const filePath of packageFiles) {
     const structure = await DbpfBinary.read({ filePath });
     packageStructures.set(filePath, structure);
-    const filename = basename(filePath);
-    if (filenameToPathMap.has(filename)) {
-      throw new Error(`Duplicate filename detected: "${filename}". Use unique filenames or switch to sha256-based mapping.`);
-    }
-    filenameToPathMap.set(filename, filePath);
     sha256ToPathMap.set(structure.sha256, filePath);
   }
 

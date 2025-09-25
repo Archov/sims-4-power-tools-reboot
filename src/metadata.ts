@@ -109,8 +109,9 @@ export async function analyzePackagesForDeduplication(
   // Collect metadata from all packages
   const packageMetadata = await collectPackagesMetadata(packageFiles);
 
-  // Build deduplication map: contentHash -> deduplication info with occurrences
+  // Build deduplication map: (contentHash + TGI) -> deduplication info with occurrences
   const deduplicationMap = new Map<string, {
+    readonly contentHash: string;
     compressionFlags: number;
     sourcePackages: Set<string>;
     occurrences: { readonly filename: string; readonly packageSha256: string; readonly tgi: SerializableTgi }[];
@@ -138,15 +139,17 @@ export async function analyzePackagesForDeduplication(
         group: resourceInfo.tgi.group,
         instance: resourceInfo.tgi.instance.toString(),
       };
+      const dedupKey = `${contentHash}:${serializableTgi.type}:${serializableTgi.group}:${serializableTgi.instance}`;
 
-      let entry = deduplicationMap.get(contentHash);
+      let entry = deduplicationMap.get(dedupKey);
       if (!entry) {
         entry = {
+          contentHash,
           compressionFlags: resourceInfo.compressionFlags,
           sourcePackages: new Set<string>(),
           occurrences: [],
         };
-        deduplicationMap.set(contentHash, entry);
+        deduplicationMap.set(dedupKey, entry);
       }
       entry.sourcePackages.add(packageName);
       entry.occurrences.push({ filename: packageName, packageSha256: pkg.sha256, tgi: serializableTgi });
@@ -154,10 +157,10 @@ export async function analyzePackagesForDeduplication(
   }
 
   // Convert to final format
-  const uniqueResources: UniqueResourceInfo[] = Array.from(deduplicationMap.entries()).map(
-    ([contentHash, data]) => ({
+  const uniqueResources: UniqueResourceInfo[] = Array.from(deduplicationMap.values()).map(
+    (data) => ({
       tgi: data.occurrences[0].tgi,
-      contentHash,
+      contentHash: data.contentHash,
       // size intentionally omitted here; can be filled during assembly if needed
       compressionFlags: data.compressionFlags,
       sourcePackages: Array.from(data.sourcePackages),
