@@ -273,7 +273,9 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, data
       buffer.writeUInt32LE(dataOffsetValue, entryOffset + 16);
 
       // Update size field if it has changed (handle negative values from high bit set)
-      const sizeFieldValue = resource.sizeField < 0 ? resource.sizeField >>> 0 : resource.sizeField;
+      const sizeFieldValue = resource.sizeField < 0
+        ? Number(BigInt(resource.sizeField) & BigInt(0xFFFFFFFF))
+        : resource.sizeField;
       buffer.writeUInt32LE(sizeFieldValue, entryOffset + 20);
     } else {
       // Reconstruct the entry from scratch (fallback)
@@ -300,7 +302,9 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, data
       }
       buffer.writeUInt32LE(dataOffsetValue, entryOffset + 16);
 
-      const sizeFieldValue = resource.sizeField < 0 ? resource.sizeField >>> 0 : resource.sizeField;
+      const sizeFieldValue = resource.sizeField < 0
+        ? Number(BigInt(resource.sizeField) & BigInt(0xFFFFFFFF))
+        : resource.sizeField;
       buffer.writeUInt32LE(sizeFieldValue, entryOffset + 20);
       buffer.writeUInt32LE(resource.uncompressedSize, entryOffset + 24);
       buffer.writeUInt16LE(resource.compressionFlags, entryOffset + 28);
