@@ -109,9 +109,12 @@ function parseResource(buffer: Buffer, entryOffset: number, dataStartOffset: num
   const dataOffsetEncoded: boolean = (dataOffsetField & 0x80000000) !== 0;
   const dataOffset: number = dataOffsetEncoded ? (dataOffsetField & 0x7fffffff) + dataStartOffset : dataOffsetField;
 
-  // Bounds checking - ensure resource data doesn't extend past file end
-  if (dataOffset + actualSize > buffer.length) {
-    throw new DbpfBinaryError(`Resource data extends beyond file bounds: offset=${dataOffset}, size=${actualSize}, fileSize=${buffer.length}`);
+  // Bounds checking - ensure resource data stays within the input buffer
+  const dataEnd: number = dataOffset + actualSize;
+  if (dataOffset < 0 || dataEnd < dataOffset || dataEnd > buffer.length) {
+    throw new DbpfBinaryError(
+      `Resource data extends beyond file bounds: offset=${dataOffset}, size=${actualSize}, fileSize=${buffer.length}`
+    );
   }
 
   const rawData: Buffer = buffer.subarray(dataOffset, dataOffset + actualSize);
