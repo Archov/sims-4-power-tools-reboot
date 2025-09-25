@@ -272,8 +272,9 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, data
       }
       buffer.writeUInt32LE(dataOffsetValue, entryOffset + 16);
 
-      // Update size field if it has changed
-      buffer.writeUInt32LE(resource.sizeField, entryOffset + 20);
+      // Update size field if it has changed (handle negative values from high bit set)
+      const sizeFieldValue = resource.sizeField < 0 ? resource.sizeField >>> 0 : resource.sizeField;
+      buffer.writeUInt32LE(sizeFieldValue, entryOffset + 20);
     } else {
       // Reconstruct the entry from scratch (fallback)
       const type = resource.tgi.type;
@@ -299,7 +300,8 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, data
       }
       buffer.writeUInt32LE(dataOffsetValue, entryOffset + 16);
 
-      buffer.writeUInt32LE(resource.sizeField, entryOffset + 20);
+      const sizeFieldValue = resource.sizeField < 0 ? resource.sizeField >>> 0 : resource.sizeField;
+      buffer.writeUInt32LE(sizeFieldValue, entryOffset + 20);
       buffer.writeUInt32LE(resource.uncompressedSize, entryOffset + 24);
       buffer.writeUInt16LE(resource.compressionFlags, entryOffset + 28);
       buffer.writeUInt16LE(0x0000, entryOffset + 30);

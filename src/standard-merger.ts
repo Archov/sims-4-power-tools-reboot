@@ -430,12 +430,7 @@ function createManifestResource(manifestData: { compressed: Buffer; originalSize
 
   // Check if data is actually compressed
   const isCompressed = manifestData.compressed.length < manifestData.originalSize;
-  let sizeField = manifestData.compressed.length;
-  if (isCompressed) {
-    // Set the high bit using BigInt and ensure result is positive
-    const result = BigInt(manifestData.compressed.length) | BigInt(0x80000000);
-    sizeField = Number(result & BigInt(0xFFFFFFFF)); // Mask to 32 bits
-  }
+  const sizeField = manifestData.compressed.length; // Don't set high bit - let compressionFlags indicate compression
 
   return {
     tgi: {
