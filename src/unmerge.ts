@@ -14,7 +14,7 @@ import { Tgi } from './types/tgi.js';
 import { extractResourceData } from './metadata.js';
 import { DeduplicatedMergeMetadata, PackageSummary } from './types/metadata.js';
 import { METADATA_TGI } from './constants/metadata-tgi.js';
-import { StandardMergeManifest, StandardMetadataUtils } from './types/standard-metadata.js';
+import { StandardMergeManifest, StandardMetadataUtils, StandardMergedPackage } from './types/standard-metadata.js';
 import { StandardBinarySerializer } from './utils/standard-binary-serializer.js';
 import { STANDARD_MANIFEST_TYPE, STANDARD_MANIFEST_GROUP, STANDARD_MANIFEST_INSTANCE } from './utils/standard-constants.js';
 
@@ -46,10 +46,11 @@ export function detectMergeFormat(mergedStructure: DbpfBinaryStructure): 'standa
     r.tgi.instance === METADATA_TGI.instance
   );
 
-  if (hasStandardManifest && !hasDedupMetadata) {
+
+  if (hasDedupMetadata) {
+    return 'deduplication'; // Prioritize deduplication format if present (what actually created the package)
+  } else if (hasStandardManifest) {
     return 'standard';
-  } else if (!hasStandardManifest && hasDedupMetadata) {
-    return 'deduplication';
   } else {
     return 'unknown';
   }
@@ -84,7 +85,14 @@ async function extractStandardMergeManifest(mergedFile: string): Promise<Standar
       const inflateAsync = promisify(inflate);
       manifestData = await inflateAsync(manifestBuffer);
     } catch (decompressError) {
-      // If decompression fails, assume it's already uncompressed
+      // Check if this is a zlib-specific error (indicating data is likely not compressed)
+      // If it's a different type of error, rethrow it
+      if (decompressError instanceof Error && decompressError.message.includes('zlib')) {
+        // Decompression failed, assume data is already uncompressed
+        manifestData = manifestBuffer;
+      } else {
+        throw decompressError;
+      }
     }
 
     // Deserialize the binary manifest
@@ -139,14 +147,14 @@ async function extractDeduplicatedMergeMetadata(mergedFile: string): Promise<Ded
         tgi: {
           type: typeof resource.tgi.type === 'string' ? Number.parseInt(resource.tgi.type, 16) : resource.tgi.type,
           group: typeof resource.tgi.group === 'string' ? Number.parseInt(resource.tgi.group, 16) : resource.tgi.group,
-          instance: typeof resource.tgi.instance === 'string' ? BigInt(resource.tgi.instance) : BigInt(resource.tgi.instance),
+          instance: typeof resource.tgi.instance === 'string' ? BigInt(resource.tgi.instance) : resource.tgi.instance,
         },
         occurrences: resource.occurrences.map((occurrence: any) => ({
           ...occurrence,
           tgi: {
             type: typeof occurrence.tgi.type === 'string' ? Number.parseInt(occurrence.tgi.type, 16) : occurrence.tgi.type,
             group: typeof occurrence.tgi.group === 'string' ? Number.parseInt(occurrence.tgi.group, 16) : occurrence.tgi.group,
-            instance: typeof occurrence.tgi.instance === 'string' ? BigInt(occurrence.tgi.instance) : BigInt(occurrence.tgi.instance),
+            instance: typeof occurrence.tgi.instance === 'string' ? BigInt(occurrence.tgi.instance) : occurrence.tgi.instance,
           },
         })),
       })),
@@ -436,11 +444,17 @@ async function fileExists(filePath: string): Promise<boolean> {
  *
  * @param mergedFile - Path to the deduplicated merged package file
  * @param outputDir - Directory where reconstructed packages will be written
+ * @param options - Optional configuration for unmerge behavior
  * @throws UnmergeError if unmerging fails due to missing metadata, corrupted data, or I/O errors
  */
-export async function unmergePackage(mergedFile: string, outputDir: string): Promise<void> {
-  console.log(`Starting unmerge operation from: ${mergedFile}`);
-  console.log(`Output will be written to: ${outputDir}`);
+export async function unmergePackage(
+  mergedFile: string,
+  outputDir: string,
+  options?: { logger?: { log: (message: string) => void; error: (message: string) => void } }
+): Promise<void> {
+  const logger = options?.logger ?? console;
+  logger.log(`Starting unmerge operation from: ${mergedFile}`);
+  logger.log(`Output will be written to: ${outputDir}`);
 
   // Resolve paths
   const resolvedMergedFile = resolve(mergedFile);
@@ -450,11 +464,11 @@ export async function unmergePackage(mergedFile: string, outputDir: string): Pro
   await ensureOutputDirectory(resolvedOutputDir);
 
   // Read the merged package structure
-  console.log('\nReading merged package structure...');
+  logger.log('\nReading merged package structure...');
   let mergedStructure: DbpfBinaryStructure;
   try {
     mergedStructure = await DbpfBinary.read({ filePath: resolvedMergedFile });
-    console.log(`Merged package contains ${mergedStructure.resources.length} resources`);
+    logger.log(`Merged package contains ${mergedStructure.resources.length} resources`);
   } catch (error) {
     throw new UnmergeError(
       `Failed to read merged package "${resolvedMergedFile}": ${error instanceof Error ? error.message : String(error)}`,
@@ -464,7 +478,7 @@ export async function unmergePackage(mergedFile: string, outputDir: string): Pro
 
   // Detect the merge format
   const mergeFormat = detectMergeFormat(mergedStructure);
-  console.log(`\nDetected merge format: ${mergeFormat}`);
+  logger.log(`\nDetected merge format: ${mergeFormat}`);
 
   if (mergeFormat === 'unknown') {
     throw new UnmergeError(
@@ -474,7 +488,7 @@ export async function unmergePackage(mergedFile: string, outputDir: string): Pro
     );
   }
 
-  let packages: any[] = [];
+  let packages: StandardMergedPackage[] | PackageSummary[] = [];
   let tgiToResourceMap: Map<string, BinaryResource>;
 
   let manifest: StandardMergeManifest | undefined;
@@ -482,26 +496,26 @@ export async function unmergePackage(mergedFile: string, outputDir: string): Pro
 
   if (mergeFormat === 'standard') {
     // Extract and parse the standard merge manifest
-    console.log('\nExtracting standard merge manifest...');
+    logger.log('\nExtracting standard merge manifest...');
     manifest = await extractStandardMergeManifest(resolvedMergedFile);
 
     // Create TGI to resource map for standard format
-    console.log('\nBuilding TGI to resource map...');
+    logger.log('\nBuilding TGI to resource map...');
     tgiToResourceMap = createTgiToResourceMapStandard(mergedStructure);
 
     packages = StandardMetadataUtils.enumeratePackages(manifest);
-    console.log(`\nReconstructing ${packages.length} original packages from standard merge...`);
+    logger.log(`\nReconstructing ${packages.length} original packages from standard merge...`);
   } else {
     // Extract and parse the deduplicated merge metadata
-    console.log('\nExtracting deduplicated merge metadata...');
+    logger.log('\nExtracting deduplicated merge metadata...');
     metadata = await extractDeduplicatedMergeMetadata(resolvedMergedFile);
 
     // Create TGI to resource map for deduplication format
-    console.log('\nBuilding TGI to resource map...');
+    logger.log('\nBuilding TGI to resource map...');
     tgiToResourceMap = createTgiToResourceMap(mergedStructure);
 
     packages = Array.from(metadata.originalPackages);
-    console.log(`\nReconstructing ${packages.length} original packages from deduplicated merge...`);
+    logger.log(`\nReconstructing ${packages.length} original packages from deduplicated merge...`);
   }
 
   // Validate that we have resources to work with
@@ -511,20 +525,26 @@ export async function unmergePackage(mergedFile: string, outputDir: string): Pro
 
   // Track package names to handle duplicates
   const usedNames = new Set<string>();
+  const nameMapping = new Map<string, string>(); // Maps original filename to actual output filename
 
   // Reconstruct each original package
   for (const pkg of packages) {
     let basePackageName: string;
+    let originalFilename: string;
     let reconstructedStructure: DbpfBinaryStructure;
 
     if (mergeFormat === 'standard') {
       // pkg is StandardMergedPackage
-      basePackageName = pkg.name;
-      reconstructedStructure = reconstructPackageStandard(pkg, mergedStructure, tgiToResourceMap);
+      const stdPkg = pkg as StandardMergedPackage;
+      basePackageName = stdPkg.name;
+      originalFilename = stdPkg.name;
+      reconstructedStructure = reconstructPackageStandard(stdPkg, mergedStructure, tgiToResourceMap);
     } else {
       // pkg is PackageSummary from deduplication metadata
-      basePackageName = pkg.filename;
-      reconstructedStructure = reconstructPackage(pkg, metadata!, mergedStructure, tgiToResourceMap);
+      const pkgSummary = pkg as PackageSummary;
+      basePackageName = pkgSummary.filename;
+      originalFilename = pkgSummary.filename;
+      reconstructedStructure = reconstructPackage(pkgSummary, metadata!, mergedStructure, tgiToResourceMap);
     }
 
     // Handle duplicate package names by appending suffix
@@ -536,10 +556,19 @@ export async function unmergePackage(mergedFile: string, outputDir: string): Pro
     }
     usedNames.add(packageName);
 
-    console.log(`  - Reconstructing: ${packageName}.package`);
+    const outputFileName = mergeFormat === 'standard'
+      ? `${packageName}.package`
+      : packageName;
+
+    // Record the mapping for verification (only for deduplication format)
+    if (mergeFormat === 'deduplication') {
+      nameMapping.set(originalFilename, outputFileName);
+    }
+
+    logger.log(`  - Reconstructing: ${outputFileName}`);
 
     // Check if output file already exists
-    const outputPath = resolve(resolvedOutputDir, `${packageName}.package`);
+    const outputPath = resolve(resolvedOutputDir, outputFileName);
     if (await fileExists(outputPath)) {
       throw new UnmergeError(
         `Output file already exists: ${outputPath}. ` +
@@ -553,7 +582,7 @@ export async function unmergePackage(mergedFile: string, outputDir: string): Pro
     // Write the reconstructed package
     try {
       await DbpfBinary.write({ structure: reconstructedStructure, outputPath });
-      console.log(`    ✓ Written to: ${outputPath}`);
+      logger.log(`    ✓ Written to: ${outputPath}`);
     } catch (error) {
       throw new UnmergeError(
         `Failed to write reconstructed package "${packageName}.package": ${error instanceof Error ? error.message : String(error)}`,
@@ -563,15 +592,15 @@ export async function unmergePackage(mergedFile: string, outputDir: string): Pro
   }
 
   // Post-unmerge verification
-  console.log('\nPerforming post-unmerge verification...');
+  logger.log('\nPerforming post-unmerge verification...');
   if (mergeFormat === 'standard') {
     await verifyReconstructedPackagesStandard(resolvedOutputDir, manifest!);
   } else {
-    await verifyReconstructedPackages(resolvedOutputDir, metadata!);
+    await verifyReconstructedPackages(resolvedOutputDir, metadata!, nameMapping);
   }
 
-  console.log('\nUnmerge operation completed successfully!');
-  console.log(`Reconstructed ${packages.length} packages in: ${resolvedOutputDir}`);
+  logger.log('\nUnmerge operation completed successfully!');
+  logger.log(`Reconstructed ${packages.length} packages in: ${resolvedOutputDir}`);
 }
 
 /**
@@ -624,28 +653,30 @@ async function verifyReconstructedPackagesStandard(outputDir: string, manifest: 
  * @param outputDir - Directory containing reconstructed packages
  * @param metadata - Original deduplicated merge metadata with expected hashes
  */
-async function verifyReconstructedPackages(outputDir: string, metadata: DeduplicatedMergeMetadata): Promise<void> {
+async function verifyReconstructedPackages(outputDir: string, metadata: DeduplicatedMergeMetadata, nameMapping?: Map<string, string>): Promise<void> {
   let verifiedCount = 0;
   let mismatchCount = 0;
 
   for (const packageSummary of metadata.originalPackages) {
-    const packagePath = resolve(outputDir, packageSummary.filename);
+    // Use the mapped name if available (for handling renamed duplicates), otherwise use original filename
+    const actualFilename = nameMapping?.get(packageSummary.filename) ?? packageSummary.filename;
+    const packagePath = resolve(outputDir, actualFilename);
 
     try {
       const reconstructedStructure = await DbpfBinary.read({ filePath: packagePath });
 
       if (reconstructedStructure.sha256 === packageSummary.sha256) {
         verifiedCount++;
-        console.log(`  ✓ ${packageSummary.filename}: SHA256 verified`);
+        console.log(`  ✓ ${actualFilename}: SHA256 verified`);
       } else {
         mismatchCount++;
-        console.error(`  ✗ ${packageSummary.filename}: SHA256 mismatch!`);
+        console.error(`  ✗ ${actualFilename}: SHA256 mismatch!`);
         console.error(`    Expected: ${packageSummary.sha256}`);
         console.error(`    Actual:   ${reconstructedStructure.sha256}`);
       }
     } catch (error) {
       mismatchCount++;
-      console.error(`  ✗ ${packageSummary.filename}: Failed to read reconstructed package - ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`  ✗ ${actualFilename}: Failed to read reconstructed package - ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

@@ -15,13 +15,13 @@ import { resolve } from 'node:path';
 
 function printUsage() {
   console.log(`
-Standard Merger & Unmerger Test Script
+Package Merger & Unmerger Test Script
 
 Usage:
-  # Merge packages
+  # Merge packages (standard format)
   node test-standard-merger.js <input-dir> <output-file> [manifest-file]
 
-  # Unmerge packages
+  # Unmerge packages (supports both standard and deduplication formats)
   node test-standard-merger.js unmerge <merged-file> <output-dir>
 
 Arguments:
@@ -80,23 +80,17 @@ async function testStandardMerger(inputDir, outputFile, manifestFile) {
 
 async function testStandardUnmerger(mergedFile, outputDir) {
   try {
-    console.log('Testing standard-compatible unmerger...\n');
+    console.log('Testing unmerger...\n');
 
-    // First detect what kind of merge this is
+    // Detect and report format for visibility; proceed for both supported formats
     const structure = await DbpfBinary.read({ filePath: mergedFile });
     const format = detectMergeFormat(structure);
     console.log(`Detected merge format: ${format}`);
 
-    if (format !== 'standard') {
-      console.log('⚠️ This test script is designed for standard merged packages only.');
-      console.log('For deduplication merged packages, use the round-trip validation scripts instead.');
-      return;
-    }
-
     // Test unmerging the packages
     await unmergePackage(mergedFile, outputDir);
 
-    console.log('\n🎉 Standard unmerger test PASSED - packages successfully reconstructed!');
+    console.log('\n🎉 Unmerger test PASSED - packages successfully reconstructed!');
 
   } catch (error) {
     console.error('Test failed:', error);
