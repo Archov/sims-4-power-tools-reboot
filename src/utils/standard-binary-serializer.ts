@@ -63,6 +63,23 @@ export class StandardBinarySerializer {
       this.writeUint32(resource.type);
       this.writeUint32(resource.group);
     }
+
+    // Optional header and size information for byte-perfect reconstruction
+    const hasHeader = pkg.headerBytes ? 1 : 0;
+    this.writeUint8(hasHeader);
+    if (hasHeader && pkg.headerBytes) {
+      const headerBuffer = Buffer.from(pkg.headerBytes, 'base64');
+      this.ensureCapacity(headerBuffer.length);
+      headerBuffer.copy(this.buffer, this.offset);
+      this.offset += headerBuffer.length;
+      this.writeUint32(pkg.totalSize || 0);
+    }
+  }
+
+  private writeUint8(value: number): void {
+    this.ensureCapacity(1);
+    this.buffer.writeUInt8(value, this.offset);
+    this.offset += 1;
   }
 
   private writeUint32(value: number): void {
@@ -151,7 +168,26 @@ class StandardBinaryDeserializer {
       resources.push({ type, group, instance });
     }
 
-    return { name, resources };
+    // Optional header and size information for byte-perfect reconstruction
+    const hasHeader = this.readUint8();
+    let headerBytes: string | undefined;
+    let totalSize: number | undefined;
+
+    if (hasHeader) {
+      const headerBuffer = this.buffer.subarray(this.offset, this.offset + 96);
+      headerBytes = headerBuffer.toString('base64');
+      this.offset += 96;
+      totalSize = this.readUint32();
+    }
+
+    return { name, resources, headerBytes, totalSize };
+  }
+
+  private readUint8(): number {
+    this.ensureAvailable(1);
+    const value = this.buffer.readUInt8(this.offset);
+    this.offset += 1;
+    return value;
   }
 
   private readUint32(): number {

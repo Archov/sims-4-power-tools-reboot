@@ -4,14 +4,32 @@
   "description": "Byte-perfect Sims 4 package merge/unmerge tooling with manual validation focus.",
   "type": "module",
   "private": true,
+  "bin": {
+    "sims4-tools": "./dist/cli.js"
+  },
+  "main": "./dist/cli-cjs.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:cjs": "tsc -p tsconfig-cjs.json",
+    "build:exe": "npm run build:cjs && pkg dist/cli-cjs.js --targets node18-win-x64 --output sims4-tools.exe",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts",
-    "test": "vitest"
+    "test": "vitest",
+    "cli": "node dist/cli.js"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "pkg": {
+    "scripts": [
+      "dist/cli-cjs.js",
+      "dist/**/*.js"
+    ],
+    "assets": [
+      "package.json",
+      "dist/**/*"
+    ],
+    "outputPath": "dist"
   },
   "dependencies": {
     "@s4tk/models": "^0.6.14",
@@ -22,6 +40,7 @@
     "@typescript-eslint/eslint-plugin": "^8.2.0",
     "@typescript-eslint/parser": "^8.2.0",
     "eslint": "^9.7.0",
+    "pkg": "^5.8.1",
     "typescript": "^5.4.5",
     "vitest": "^3.2.4"
   }

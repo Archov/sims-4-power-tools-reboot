@@ -16,6 +16,10 @@ export interface StandardMergedPackage {
   readonly name: string;
   /** Resources contained in this package. */
   readonly resources: readonly SerializableTgi[];
+  /** Original package header (96 bytes, base64 encoded) for byte-perfect reconstruction. */
+  readonly headerBytes?: string;
+  /** Original package total size for validation. */
+  readonly totalSize?: number;
 }
 
 /**

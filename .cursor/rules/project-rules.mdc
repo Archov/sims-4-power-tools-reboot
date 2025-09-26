@@ -25,3 +25,15 @@ alwaysApply: true
 - **Summarize outcomes.** Clearly state what was implemented and any caveats the user should know.
 - **Highlight manual QA steps.** Present validation instructions using ordered or unordered lists with explicit commands or interactions.
 - **Be concise and actionable.** Keep explanations short, focusing on what the user needs to execute.
+
+### No Production Use Language
+- **NEVER** use phrases like "Ready for Production Use", "production ready", "production use", or any similar production-related language
+- This is a POC software project - such language is inappropriate and annoying
+- Use appropriate alternatives instead:
+  - "functional" 
+  - "working"
+  - "implemented" 
+  - "complete"
+  - "ready for testing"
+  - "operational"
+  - "feature complete"

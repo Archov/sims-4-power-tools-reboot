@@ -17,6 +17,33 @@ npm install
 - `npm run typecheck` – Static type analysis with no emit
 - `npm run lint` – ESLint across `src/`
 - `npm run test` – Vitest test suite (optional automation)
+- `npm run cli` – Run the CLI tool (after building)
+
+## CLI Usage
+
+After building (`npm run build`), use the CLI for merging and unmerging packages:
+
+### Merge Packages
+```bash
+# Merge all .package files in a directory
+node dist/cli.js merge ./my-packages ./output/merged.package
+
+# With debug manifest output
+node dist/cli.js merge ./my-packages ./output/merged.package --manifest ./output/manifest.json
+```
+
+### Unmerge Packages
+```bash
+# Unmerge a merged package back to individual files
+node dist/cli.js unmerge ./merged.package ./output/unmerged/
+```
+
+### CLI Help
+```bash
+node dist/cli.js --help
+node dist/cli.js merge --help
+node dist/cli.js unmerge --help
+```
 
 ## Manual Validation Checklist
 - **Install dependencies**: Run `npm install` and confirm it finishes without errors.

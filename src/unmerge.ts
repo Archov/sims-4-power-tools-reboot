@@ -279,9 +279,13 @@ function reconstructPackageStandard(
     packageResources.push(reconstructedResource);
   }
 
-  // For standard merged packages, we don't have original headers stored
-  // Use the same header as the merged package
-  const headerBuffer = Buffer.from(mergedStructure.header);
+  // Use original header if available, otherwise use merged package header as fallback
+  let headerBuffer: Buffer;
+  if (pkg.headerBytes) {
+    headerBuffer = Buffer.from(pkg.headerBytes, 'base64');
+  } else {
+    headerBuffer = Buffer.from(mergedStructure.header);
+  }
 
   // Create the reconstructed package structure
   const reconstructedStructure: DbpfBinaryStructure = {
@@ -289,7 +293,7 @@ function reconstructPackageStandard(
     header: headerBuffer,
     resources: packageResources,
     indexTable: Buffer.alloc(0), // Will be rebuilt when writing
-    totalSize: 0, // Will be calculated when writing
+    totalSize: pkg.totalSize || 0, // Use stored size if available
     sha256: '', // Will be calculated when writing
     dataStartOffset: mergedStructure.dataStartOffset, // Use same data start offset
     indexOffset: 0, // Will be calculated when writing
