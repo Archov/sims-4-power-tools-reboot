@@ -16,6 +16,12 @@ const INDEX_OFFSET_LOW = 0x40;
 const INDEX_OFFSET_HIGH = 0x44;
 const DATA_OFFSET = 0x30;
 
+// Offset calculation constants
+const RELATIVE_OFFSET_FLAG = 0x80000000 as const;
+const MAX_UINT32 = 0xFFFFFFFF as const;
+const MAX_INT31 = 0x7FFFFFFF as const;
+const INDEX_FLAGS_RELATIVE = 4 as const;
+
 class DbpfBinaryError extends Error {
   constructor(message: string) {
     super(message);
@@ -253,14 +259,27 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, data
     const resource = resources[i];
     const entryOffset = 4 + i * INDEX_ENTRY_SIZE;
 
-    const dataOffsetValue = (() => {
-      if (indexFlags === 4) {
-        const relativeOffset = resource.offset - dataStartOffset;
+    const dataOffsetValue: number = (() => {
+      if (indexFlags === INDEX_FLAGS_RELATIVE) {
+        const relativeOffset: number = resource.offset - dataStartOffset;
         if (relativeOffset < 0) {
           throw new DbpfBinaryError(`Resource offset ${resource.offset} precedes dataStartOffset ${dataStartOffset}`);
         }
-        return i === 0 ? (resource.offset >>> 0) : ((relativeOffset | 0x80000000) >>> 0);
+        if (i === 0) {
+          if (resource.offset > MAX_UINT32) {
+            throw new DbpfBinaryError(`Absolute offset exceeds 32-bit limit: ${resource.offset}`);
+          }
+          return resource.offset >>> 0;
+        } else {
+          if (relativeOffset > MAX_INT31) {
+            throw new DbpfBinaryError(`Relative offset exceeds 31-bit limit: ${relativeOffset}`);
+          }
+          return (relativeOffset | RELATIVE_OFFSET_FLAG) >>> 0;
+        }
       } else {
+        if (resource.offset > MAX_UINT32) {
+          throw new DbpfBinaryError(`Absolute offset exceeds 32-bit limit: ${resource.offset}`);
+        }
         return resource.offset >>> 0;
       }
     })();
@@ -270,7 +289,11 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, data
       : resource.sizeField;
 
     // If we have original indexEntry data, preserve it and only update the offset
-    if (resource.indexEntry && resource.indexEntry.length >= 32 && resource.indexEntry.some(b => b !== 0)) {
+    if (
+      resource.indexEntry &&
+      resource.indexEntry.length >= INDEX_ENTRY_SIZE &&
+      resource.indexEntry.subarray(0, INDEX_ENTRY_SIZE).some(b => b !== 0)
+    ) {
       // Copy the original index entry
       resource.indexEntry.copy(buffer, entryOffset, 0, 32);
 

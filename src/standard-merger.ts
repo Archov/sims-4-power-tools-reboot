@@ -129,18 +129,14 @@ async function enumeratePackageFiles(directoryPath: string): Promise<string[]> {
     }
   }
 
-  // Sort packages in the same order as standard tools (by N## number, descending, base packages before variants)
+  // Sort packages for deterministic merging order
+  // Prioritize packages with generational numbers (N##) for compatibility with standard tools,
+  // but don't require this pattern - fall back to alphabetical sorting for other packages
   return packageFiles.sort((a, b) => {
-    const extractNumber = (path: string): number | null => {
+    const extractNumber = (path: string): number => {
       const filename = path.split(/[/\\]/).pop() || '';
       const match = filename.match(/N(\d+)/);
-      if (match) {
-        return parseInt(match[1], 10);
-      } else {
-        // Fallback: log a warning for unmatched files
-        console.warn(`Warning: Package file "${filename}" does not match expected pattern "N##". Sorting it to the end.`);
-        return null;
-      }
+      return match ? parseInt(match[1], 10) : -1; // -1 for non-generational packages
     };
 
     const getBaseName = (path: string): string => {
@@ -151,36 +147,32 @@ async function enumeratePackageFiles(directoryPath: string): Promise<string[]> {
     const numA = extractNumber(a);
     const numB = extractNumber(b);
 
-    // Handle unmatched files: sort them to the end
-    if (numA === null && numB === null) {
-      // Both unmatched, sort alphabetically
-      return a.localeCompare(b);
-    } else if (numA === null) {
-      return 1; // a is unmatched, b is matched: b comes first
-    } else if (numB === null) {
-      return -1; // b is unmatched, a is matched: a comes first
+    // Sort generational packages by number descending, then alphabetically
+    if (numA >= 0 && numB >= 0) {
+      if (numA !== numB) {
+        return numB - numA;
+      }
+
+      // Within same generation, sort base packages before variants
+      const filenameA = a.split(/[/\\]/).pop() || '';
+      const filenameB = b.split(/[/\\]/).pop() || '';
+      const baseA = getBaseName(a);
+      const baseB = getBaseName(b);
+      const isVariantA = filenameA.includes(' (1)');
+      const isVariantB = filenameB.includes(' (1)');
+
+      if (baseA === baseB) {
+        // Same base name, base package comes first
+        return isVariantA ? 1 : -1;
+      }
+
+      // Different base names, sort alphabetically
+      return baseA.localeCompare(baseB);
     }
 
-    // Sort by number descending
-    if (numA !== numB) {
-      return numB - numA;
-    }
-
-    // Within same number, sort base packages before variants
-    const filenameA = a.split(/[/\\]/).pop() || '';
-    const filenameB = b.split(/[/\\]/).pop() || '';
-    const baseA = getBaseName(a);
-    const baseB = getBaseName(b);
-    const isVariantA = filenameA.includes(' (1)');
-    const isVariantB = filenameB.includes(' (1)');
-
-    if (baseA === baseB) {
-      // Same base name, base package comes first
-      return isVariantA ? 1 : -1;
-    }
-
-    // Different base names, sort alphabetically
-    return baseA.localeCompare(baseB);
+    // At least one package doesn't follow generational naming
+    // Sort all packages alphabetically for deterministic order
+    return a.localeCompare(b);
   });
 }
 
@@ -251,7 +243,17 @@ async function createStandardManifest(
             }
 
             const key = `${resource.tgi.type}:${resource.tgi.group}:${resource.tgi.instance}`;
-            if (!globalResourceMap.has(key)) {
+            const existingResource = globalResourceMap.get(key);
+            if (existingResource) {
+              if (
+                existingResource.size !== resource.size ||
+                !existingResource.rawData.equals(resource.rawData)
+              ) {
+                throw new Error(
+                  `Conflicting resource bytes for TGI ${key} inside nested merge "${packageName}". Cannot safely deduplicate.`
+                );
+              }
+            } else {
               globalResourceMap.set(key, resource);
             }
           }
@@ -291,7 +293,17 @@ async function createStandardManifest(
       }
 
       const key = `${resource.tgi.type}:${resource.tgi.group}:${resource.tgi.instance}`;
-      if (!globalResourceMap.has(key)) {
+      const existingResource = globalResourceMap.get(key);
+      if (existingResource) {
+        if (
+          existingResource.size !== resource.size ||
+          !existingResource.rawData.equals(resource.rawData)
+        ) {
+          throw new Error(
+            `Conflicting resource bytes for TGI ${key} between packages. Cannot safely deduplicate.`
+          );
+        }
+      } else {
         globalResourceMap.set(key, resource);
       }
     }
