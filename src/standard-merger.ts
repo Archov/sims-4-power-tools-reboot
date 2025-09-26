@@ -55,18 +55,31 @@ export async function mergePackagesStandard(options: StandardMergerOptions): Pro
 
   // Load all package structures
   const packageStructures = new Map<string, DbpfBinaryStructure>();
+  const skippedPackages: string[] = [];
+
   for (const filePath of packageFiles) {
     try {
       const structure = await DbpfBinary.read({ filePath });
       packageStructures.set(filePath, structure);
     } catch (error) {
-      console.error(`Failed to read package ${basename(filePath)}: ${error}`);
-      throw error;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.warn(`⚠️  Skipping corrupted package ${basename(filePath)}: ${errorMsg}`);
+      skippedPackages.push(filePath);
+      // Continue with other packages instead of failing completely
     }
   }
 
-  // Create the merge manifest and resource map
-  const { manifest, resourceMap: globalResourceMap } = await createStandardManifest(packageFiles, packageStructures);
+  if (packageStructures.size === 0) {
+    throw new Error('No valid packages found to merge. All packages appear to be corrupted.');
+  }
+
+  if (skippedPackages.length > 0) {
+    console.log(`📋 Skipped ${skippedPackages.length} corrupted packages, proceeding with ${packageStructures.size} valid packages.`);
+  }
+
+  // Create the merge manifest and resource map (only for successfully loaded packages)
+  const validPackageFiles = Array.from(packageStructures.keys());
+  const { manifest, resourceMap: globalResourceMap } = await createStandardManifest(validPackageFiles, packageStructures);
 
   // Generate and compress the manifest
   const uncompressedManifestData = StandardBinarySerializer.serialize(manifest);
@@ -89,7 +102,7 @@ export async function mergePackagesStandard(options: StandardMergerOptions): Pro
   }
 
   // Create the merged package structure (now knowing manifest size)
-  const mergedStructure = await createMergedStructure(packageFiles, packageStructures, manifest, globalResourceMap, compressedManifestData.compressed.length);
+  const mergedStructure = await createMergedStructure(validPackageFiles, packageStructures, manifest, globalResourceMap, compressedManifestData.compressed.length);
 
   const manifestResource = createManifestResource(compressedManifestData, mergedStructure.dataStartOffset);
 
@@ -212,59 +225,57 @@ async function createStandardManifest(
     );
 
     if (isMerged) {
-      // Try to handle as nested merge - extract existing manifest and merge hierarchies
-      try {
-        const existingManifestData = await extractResourceData(filePath, {
-          type: STANDARD_MANIFEST_TYPE,
-          group: STANDARD_MANIFEST_GROUP,
-          instance: STANDARD_MANIFEST_INSTANCE,
-        } as Tgi);
+      // For nested merges, treat the entire merged package as a single atomic unit
+      // Don't try to extract and re-process individual resources - just include the whole package
+      console.log(`📦 Detected nested merged package: ${packageName} (${structure.resources.length} resources)`);
 
-        if (existingManifestData) {
-          // Check if the data is compressed and decompress if needed
-          let manifestData = existingManifestData;
-          try {
-            // Try to decompress in case it's compressed
-            manifestData = await inflateAsync(existingManifestData);
-          } catch (decompressError) {
-            // If decompression fails, assume it's already uncompressed
-          }
+      // Add a single package entry representing the entire nested merge
+      const packageItem: StandardMergedPackage = {
+        name: packageName,
+        resources: structure.resources
+          .filter(r => r.tgi.type !== STANDARD_MANIFEST_TYPE) // Exclude manifest resource
+          .map(r => ({
+            type: r.tgi.type,
+            group: r.tgi.group,
+            instance: r.tgi.instance.toString(),
+          })),
+        headerBytes: Buffer.from(structure.header).toString('base64'),
+        totalSize: structure.totalSize,
+      };
 
-          const existingManifest = StandardBinarySerializer.deserialize(manifestData);
-          mergeHierarchies(rootFolder, existingManifest.root);
+      rootFolder.packages.push(packageItem);
 
-          // Add resources from the nested package to the global resource map
-          for (const resource of structure.resources) {
-            // Skip the manifest resource itself
-            if (resource.tgi.type === STANDARD_MANIFEST_TYPE &&
-                resource.tgi.group === STANDARD_MANIFEST_GROUP &&
-                resource.tgi.instance === STANDARD_MANIFEST_INSTANCE) {
-              continue;
-            }
-
-            const key = `${resource.tgi.type}:${resource.tgi.group}:${resource.tgi.instance}`;
-            const existingResource = globalResourceMap.get(key);
-            if (existingResource) {
-              if (
-                existingResource.size !== resource.size ||
-                !existingResource.rawData.equals(resource.rawData)
-              ) {
-                throw new Error(
-                  `Conflicting resource bytes for TGI ${key} inside nested merge "${packageName}". Cannot safely deduplicate.`
-                );
-              }
-            } else {
-              globalResourceMap.set(key, resource);
-            }
-          }
-
-          // Successfully processed as nested merge, skip to next package
+      // Add all resources from this nested package to the global resource map
+      for (const resource of structure.resources) {
+        // Skip the manifest resource itself
+        if (resource.tgi.type === STANDARD_MANIFEST_TYPE &&
+            resource.tgi.group === STANDARD_MANIFEST_GROUP &&
+            resource.tgi.instance === STANDARD_MANIFEST_INSTANCE) {
           continue;
         }
-      } catch (error) {
-        console.error(`Failed to extract nested manifest from ${packageName}, treating as regular package: ${error instanceof Error ? error.message : String(error)}`);
-        // Fall through to regular package processing
+
+        const key = `${resource.tgi.type}:${resource.tgi.group}:${resource.tgi.instance}`;
+        const existingResource = globalResourceMap.get(key);
+        if (existingResource) {
+          if (
+            existingResource.size !== resource.size ||
+            !existingResource.rawData.equals(resource.rawData)
+          ) {
+            console.warn(
+              `⚠️  Resource conflict detected for TGI ${key} in nested merge "${packageName}": different content found. ` +
+              `Using resource from nested package (this is normal for mod overrides).`
+            );
+            // Replace with the nested resource
+            globalResourceMap.set(key, resource);
+          }
+          // If resources are identical, keep the existing one
+        } else {
+          globalResourceMap.set(key, resource);
+        }
       }
+
+      // Successfully processed as nested merge, skip to next package
+      continue;
     }
 
     // Process as regular package
@@ -279,6 +290,8 @@ async function createStandardManifest(
     const packageItem: StandardMergedPackage = {
       name: packageName,
       resources,
+      headerBytes: Buffer.from(structure.header).toString('base64'),
+      totalSize: structure.totalSize,
     };
 
     rootFolder.packages.push(packageItem);
@@ -299,10 +312,14 @@ async function createStandardManifest(
           existingResource.size !== resource.size ||
           !existingResource.rawData.equals(resource.rawData)
         ) {
-          throw new Error(
-            `Conflicting resource bytes for TGI ${key} between packages. Cannot safely deduplicate.`
+          console.warn(
+            `⚠️  Resource conflict detected for TGI ${key}: different content found in multiple packages. ` +
+            `Using resource from current package (this is normal for mod overrides).`
           );
+          // Replace with the current resource (later packages "win" in load order)
+          globalResourceMap.set(key, resource);
         }
+        // If resources are identical, keep the existing one (already deduplicated)
       } else {
         globalResourceMap.set(key, resource);
       }
