@@ -130,7 +130,7 @@ node cli.js verify merged.package original-folder/
 
 ## Critical Technical Specifications
 
-### DBPF Structure (From S4S Analysis)
+### DBPF Structure 
 - **Header**: Exactly 96 bytes (not 128)
 - **Data Start**: Offset 0x60 (after 96-byte header)
 - **Index Table**: 32 bytes per entry, positioned after data section

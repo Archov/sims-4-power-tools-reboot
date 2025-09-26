@@ -155,12 +155,14 @@ class StandardBinaryDeserializer {
   }
 
   private readUint32(): number {
+    this.ensureAvailable(4);
     const value = this.buffer.readUInt32LE(this.offset);
     this.offset += 4;
     return value;
   }
 
   private readUint64(): bigint {
+    this.ensureAvailable(8);
     const value = this.buffer.readBigUInt64LE(this.offset);
     this.offset += 8;
     return value;
@@ -168,8 +170,18 @@ class StandardBinaryDeserializer {
 
   private readPascalString32(): string {
     const length = this.readUint32();
+    this.ensureAvailable(length);
     const str = this.buffer.toString('utf8', this.offset, this.offset + length);
     this.offset += length;
     return str;
+  }
+
+  private ensureAvailable(bytes: number): void {
+    if (bytes < 0 || !Number.isInteger(bytes)) {
+      throw new RangeError(`ensureAvailable: invalid byte count: ${bytes}`);
+    }
+    if (this.offset + bytes > this.buffer.length) {
+      throw new Error(`Unexpected end of data while reading manifest at offset ${this.offset} (need ${bytes} bytes, have ${this.buffer.length - this.offset}).`);
+    }
   }
 }

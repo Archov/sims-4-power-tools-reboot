@@ -64,6 +64,6 @@ interface DeduplicatedMergeMetadata {
 
 ## Notes
 |- **Performance** Deduplication analysis adds upfront cost but saves significant space.
-|- **Compatibility** Maintains S4S-like behavior with automatic deduplication.
+|- **Compatibility** Maintains  behavior with automatic deduplication.
 |- **Extensibility** Resource mappings enable future selective unmerging features.
 |- **Space Savings** Typical 50-70% reduction in merged package size vs. simple concatenation.

@@ -253,34 +253,36 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, data
     const resource = resources[i];
     const entryOffset = 4 + i * INDEX_ENTRY_SIZE;
 
+    const dataOffsetValue = (() => {
+      if (indexFlags === 4) {
+        const relativeOffset = resource.offset - dataStartOffset;
+        if (relativeOffset < 0) {
+          throw new DbpfBinaryError(`Resource offset ${resource.offset} precedes dataStartOffset ${dataStartOffset}`);
+        }
+        return i === 0 ? (resource.offset >>> 0) : ((relativeOffset | 0x80000000) >>> 0);
+      } else {
+        return resource.offset >>> 0;
+      }
+    })();
+
+    const sizeFieldValue = resource.sizeField < 0
+      ? Number(BigInt(resource.sizeField) & BigInt(0xFFFFFFFF))
+      : resource.sizeField;
+
     // If we have original indexEntry data, preserve it and only update the offset
     if (resource.indexEntry && resource.indexEntry.length >= 32 && resource.indexEntry.some(b => b !== 0)) {
       // Copy the original index entry
       resource.indexEntry.copy(buffer, entryOffset, 0, 32);
 
       // Update only the offset field (bytes 16-19)
-      let dataOffsetValue: number;
-      if (indexFlags === 4) {
-        const relativeOffset = resource.offset - dataStartOffset;
-        if (relativeOffset < 0) {
-          throw new DbpfBinaryError(`Resource offset ${resource.offset} precedes dataStartOffset ${dataStartOffset}`);
-        }
-        dataOffsetValue = i === 0 ? (resource.offset >>> 0) : ((relativeOffset | 0x80000000) >>> 0);
-      } else {
-        // Standard format: absolute offsets
-        dataOffsetValue = resource.offset >>> 0;
-      }
       buffer.writeUInt32LE(dataOffsetValue, entryOffset + 16);
 
       // Update size field if it has changed (handle negative values from high bit set)
-      const sizeFieldValue = resource.sizeField < 0
-        ? Number(BigInt(resource.sizeField) & BigInt(0xFFFFFFFF))
-        : resource.sizeField;
       buffer.writeUInt32LE(sizeFieldValue, entryOffset + 20);
     } else {
       // Reconstruct the entry from scratch (fallback)
-      const type = resource.tgi.type;
-      const group = resource.tgi.group;
+      const { type } = resource.tgi;
+      const { group } = resource.tgi;
       const instanceHigh = Number(resource.tgi.instance >> 32n);
       const instanceLow = Number(resource.tgi.instance & 0xFFFFFFFFn);
 
@@ -288,23 +290,7 @@ function rebuildIndexTable(resources: BinaryResource[], indexFlags: number, data
       buffer.writeUInt32LE(group, entryOffset + 4);
       buffer.writeUInt32LE(instanceHigh, entryOffset + 8);
       buffer.writeUInt32LE(instanceLow, entryOffset + 12);
-
-      // Data offset
-      let dataOffsetValue: number;
-      if (indexFlags === 4) {
-        const relativeOffset = resource.offset - dataStartOffset;
-        if (relativeOffset < 0) {
-          throw new DbpfBinaryError(`Resource offset ${resource.offset} precedes dataStartOffset ${dataStartOffset}`);
-        }
-        dataOffsetValue = i === 0 ? (resource.offset >>> 0) : ((relativeOffset | 0x80000000) >>> 0);
-      } else {
-        dataOffsetValue = resource.offset >>> 0;
-      }
       buffer.writeUInt32LE(dataOffsetValue, entryOffset + 16);
-
-      const sizeFieldValue = resource.sizeField < 0
-        ? Number(BigInt(resource.sizeField) & BigInt(0xFFFFFFFF))
-        : resource.sizeField;
       buffer.writeUInt32LE(sizeFieldValue, entryOffset + 20);
       buffer.writeUInt32LE(resource.uncompressedSize, entryOffset + 24);
       buffer.writeUInt16LE(resource.compressionFlags, entryOffset + 28);

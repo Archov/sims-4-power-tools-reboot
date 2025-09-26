@@ -68,9 +68,6 @@ export async function mergePackagesStandard(options: StandardMergerOptions): Pro
   // Create the merge manifest and resource map
   const { manifest, resourceMap: globalResourceMap } = await createStandardManifest(packageFiles, packageStructures);
 
-  // Create the merged package structure
-  const mergedStructure = await createMergedStructure(packageFiles, packageStructures, manifest, globalResourceMap);
-
   // Generate and compress the manifest
   const uncompressedManifestData = StandardBinarySerializer.serialize(manifest);
 
@@ -85,7 +82,16 @@ export async function mergePackagesStandard(options: StandardMergerOptions): Pro
     throw new Error(`Compressed manifest too large: ${compressedManifestData.compressed.length.toLocaleString()} bytes. Aborting to prevent corruption.`);
   }
 
-  const manifestResource = createManifestResource(compressedManifestData, mergedStructure.resources);
+  // Get base structure to determine data start offset
+  const baseStructure = Array.from(packageStructures.values())[0];
+  if (!baseStructure) {
+    throw new Error('No package structures available');
+  }
+
+  // Create the merged package structure (now knowing manifest size)
+  const mergedStructure = await createMergedStructure(packageFiles, packageStructures, manifest, globalResourceMap, compressedManifestData.compressed.length);
+
+  const manifestResource = createManifestResource(compressedManifestData, mergedStructure.dataStartOffset);
 
   mergedStructure.resources.unshift(manifestResource);
 
@@ -125,10 +131,16 @@ async function enumeratePackageFiles(directoryPath: string): Promise<string[]> {
 
   // Sort packages in the same order as standard tools (by N## number, descending, base packages before variants)
   return packageFiles.sort((a, b) => {
-    const extractNumber = (path: string): number => {
+    const extractNumber = (path: string): number | null => {
       const filename = path.split(/[/\\]/).pop() || '';
       const match = filename.match(/N(\d+)/);
-      return match ? parseInt(match[1], 10) : 0;
+      if (match) {
+        return parseInt(match[1], 10);
+      } else {
+        // Fallback: log a warning for unmatched files
+        console.warn(`Warning: Package file "${filename}" does not match expected pattern "N##". Sorting it to the end.`);
+        return null;
+      }
     };
 
     const getBaseName = (path: string): string => {
@@ -139,7 +151,17 @@ async function enumeratePackageFiles(directoryPath: string): Promise<string[]> {
     const numA = extractNumber(a);
     const numB = extractNumber(b);
 
-    // First sort by number descending
+    // Handle unmatched files: sort them to the end
+    if (numA === null && numB === null) {
+      // Both unmatched, sort alphabetically
+      return a.localeCompare(b);
+    } else if (numA === null) {
+      return 1; // a is unmatched, b is matched: b comes first
+    } else if (numB === null) {
+      return -1; // b is unmatched, a is matched: a comes first
+    }
+
+    // Sort by number descending
     if (numA !== numB) {
       return numB - numA;
     }
@@ -169,19 +191,21 @@ async function createStandardManifest(
   packageFiles: readonly string[],
   packageStructures: Map<string, DbpfBinaryStructure>
 ): Promise<{ manifest: StandardMergeManifest; resourceMap: Map<string, BinaryResource> }> {
+  // Import dependencies once at the top
+  const { inflate } = await import('zlib');
+  const { promisify } = await import('util');
+  const inflateAsync = promisify(inflate);
+
   const rootFolder: MutableStandardMergedFolder = {
     name: '',
     folders: [],
     packages: [],
   };
 
-  // Track packages we've already processed from nested merges
-  const processedPackages = new Set<string>();
-
   // Global resource map for all packages (including from nested merges)
   const globalResourceMap = new Map<string, BinaryResource>();
 
-  // First pass: process nested merges
+  // Single pass: attempt nested merge processing first, then fall back to regular package processing
   for (const filePath of packageFiles) {
     const structure = packageStructures.get(filePath);
     if (!structure) continue;
@@ -196,7 +220,7 @@ async function createStandardManifest(
     );
 
     if (isMerged) {
-      // Handle nested merge - extract existing manifest and merge hierarchies
+      // Try to handle as nested merge - extract existing manifest and merge hierarchies
       try {
         const existingManifestData = await extractResourceData(filePath, {
           type: STANDARD_MANIFEST_TYPE,
@@ -209,21 +233,15 @@ async function createStandardManifest(
           let manifestData = existingManifestData;
           try {
             // Try to decompress in case it's compressed
-            const { inflate } = await import('zlib');
-            const { promisify } = await import('util');
-            const inflateAsync = promisify(inflate);
             manifestData = await inflateAsync(existingManifestData);
           } catch (decompressError) {
             // If decompression fails, assume it's already uncompressed
           }
 
           const existingManifest = StandardBinarySerializer.deserialize(manifestData);
-          mergeHierarchies(rootFolder, existingManifest.root, processedPackages);
+          mergeHierarchies(rootFolder, existingManifest.root);
 
-          // Mark this nested merge package as processed so it doesn't get added as a regular package
-          processedPackages.add(packageName);
-
-          // Also add resources from the nested package to the global resource map
+          // Add resources from the nested package to the global resource map
           for (const resource of structure.resources) {
             // Skip the manifest resource itself
             if (resource.tgi.type === STANDARD_MANIFEST_TYPE &&
@@ -237,38 +255,17 @@ async function createStandardManifest(
               globalResourceMap.set(key, resource);
             }
           }
+
+          // Successfully processed as nested merge, skip to next package
+          continue;
         }
       } catch (error) {
         console.error(`Failed to extract nested manifest from ${packageName}, treating as regular package: ${error instanceof Error ? error.message : String(error)}`);
-        // Mark as processed even on failure to prevent duplicate processing
-        processedPackages.add(packageName);
+        // Fall through to regular package processing
       }
     }
-  }
 
-  // Second pass: process regular packages
-  for (const filePath of packageFiles) {
-    const structure = packageStructures.get(filePath);
-    if (!structure) continue;
-
-    const packageName = basename(filePath, '.package');
-
-    // Skip if already processed from nested merge
-    if (processedPackages.has(packageName)) {
-      console.log(`Skipping processed package: ${packageName}`);
-      continue;
-    }
-
-    // Skip nested merge files - we already processed them
-    const isMerged = structure.resources.some(r =>
-      r.tgi.type === STANDARD_MANIFEST_TYPE &&
-      r.tgi.group === STANDARD_MANIFEST_GROUP &&
-      r.tgi.instance === STANDARD_MANIFEST_INSTANCE
-    );
-    if (isMerged) {
-      continue; // Skip nested merge files
-    }
-
+    // Process as regular package
     const resources = structure.resources
       .filter(r => r.tgi.type !== STANDARD_MANIFEST_TYPE) // Exclude any existing manifests
       .map(r => ({
@@ -284,7 +281,7 @@ async function createStandardManifest(
 
     rootFolder.packages.push(packageItem);
 
-    // Also add resources from this regular package to the global resource map
+    // Add resources from this regular package to the global resource map
     for (const resource of structure.resources) {
       // Skip the manifest resource itself
       if (resource.tgi.type === STANDARD_MANIFEST_TYPE &&
@@ -312,7 +309,7 @@ async function createStandardManifest(
 /**
  * Merges two folder hierarchies for nested merge support.
  */
-function mergeHierarchies(target: MutableStandardMergedFolder, source: StandardMergedFolder, processedPackages: Set<string>): void {
+function mergeHierarchies(target: MutableStandardMergedFolder, source: StandardMergedFolder): void {
   // Add all packages from source
   for (const pkg of source.packages) {
     // Skip if this package name already exists in the target manifest (prevents duplicates)
@@ -320,11 +317,44 @@ function mergeHierarchies(target: MutableStandardMergedFolder, source: StandardM
     if (!alreadyExists) {
       target.packages.push(pkg);
     }
-    processedPackages.add(pkg.name);
   }
 
-  // Merge folders (simplified - assumes no conflicts)
-  target.folders.push(...source.folders);
+  // Merge folders with conflict resolution and deep merge
+  mergeFolders(target.folders, source.folders);
+}
+
+/**
+ * Converts a readonly StandardMergedFolder to a mutable one recursively.
+ */
+function toMutableFolder(source: StandardMergedFolder): MutableStandardMergedFolder {
+  return {
+    name: source.name,
+    folders: source.folders.map(toMutableFolder),
+    packages: [...source.packages],
+  };
+}
+
+/**
+ * Recursively merges folders with conflict resolution.
+ */
+function mergeFolders(targetFolders: MutableStandardMergedFolder[], sourceFolders: readonly StandardMergedFolder[]): void {
+  for (const sourceFolder of sourceFolders) {
+    const targetFolder = targetFolders.find(f => f.name === sourceFolder.name);
+    if (targetFolder) {
+      // Recursively merge subfolders
+      mergeFolders(targetFolder.folders, sourceFolder.folders);
+
+      // Merge packages (avoid duplicates)
+      for (const pkg of sourceFolder.packages) {
+        if (!targetFolder.packages.some(p => p.name === pkg.name)) {
+          targetFolder.packages.push(pkg);
+        }
+      }
+    } else {
+      // No conflict, add folder directly (convert to mutable)
+      targetFolders.push(toMutableFolder(sourceFolder));
+    }
+  }
 }
 
 /**
@@ -334,7 +364,8 @@ async function createMergedStructure(
   packageFiles: readonly string[],
   packageStructures: Map<string, DbpfBinaryStructure>,
   manifest: StandardMergeManifest,
-  globalResourceMap: Map<string, BinaryResource>
+  globalResourceMap: Map<string, BinaryResource>,
+  manifestSize: number
 ): Promise<DbpfBinaryStructure> {
   const mergedResources: BinaryResource[] = [];
   const tgiSet = new Set<string>(); // Track TGIs we've already included
@@ -345,9 +376,8 @@ async function createMergedStructure(
     throw new Error('No package structures available');
   }
 
-  // Start after the manifest (which is placed at offset 96, uncompressed)
-  const uncompressedManifestData = StandardBinarySerializer.serialize(manifest);
-  let currentOffset = baseStructure.dataStartOffset + uncompressedManifestData.length;
+  // Start after the manifest
+  let currentOffset = baseStructure.dataStartOffset + manifestSize;
 
   // Collect all TGIs that need to be included (with deduplication for data, but multiple index entries)
   const tgiToDataOffset = new Map<string, number>();
@@ -426,34 +456,45 @@ async function createMergedStructure(
  * Creates the manifest resource to embed in the merged package.
  */
 async function compressManifestData(data: Buffer): Promise<{ compressed: Buffer; originalSize: number }> {
-  // Use Node.js zlib with level 6 (gets us to 8018 bytes like S4S)
+  // Use Node.js zlib with level 6 (gets us to 8018 bytes as is standard)
   const { promisify } = await import('util');
   const { deflate } = await import('zlib');
   const deflateAsync = promisify(deflate);
 
   const compressed = await deflateAsync(data, { level: 6 });
-  return { compressed, originalSize: data.length };
+
+  // Return the smaller of compressed vs original data
+  const result = compressed.length < data.length ? compressed : data;
+  return { compressed: result, originalSize: data.length };
 }
 
-function createManifestResource(manifestData: { compressed: Buffer; originalSize: number }, existingResources: BinaryResource[]): BinaryResource {
-  // Place manifest at the beginning of the data section (after 96-byte header)
-  const manifestOffset = 96;
+function createManifestResource(manifestData: { compressed: Buffer; originalSize: number }, dataStartOffset: number): BinaryResource {
+  // Place manifest at the beginning of the data section (after header)
+  const manifestOffset = dataStartOffset;
 
   // Check if data is actually compressed
   const isCompressed = manifestData.compressed.length < manifestData.originalSize;
   let sizeField: number;
+  let rawData: Buffer;
+  let size: number;
+
   if (isCompressed) {
     const result = BigInt(manifestData.compressed.length) | BigInt(0x80000000);
     // Ensure it fits in 32-bit signed range for JavaScript compatibility
     const clamped = result & BigInt(0xFFFFFFFF);
     sizeField = Number(clamped);
+    rawData = manifestData.compressed;
+    size = manifestData.compressed.length;
   } else {
-    sizeField = manifestData.compressed.length;
+    // Use original uncompressed data when compression doesn't help
+    sizeField = manifestData.originalSize;
+    rawData = StandardBinarySerializer.serialize(StandardBinarySerializer.deserialize(manifestData.compressed));
+    size = manifestData.originalSize;
   }
 
   // Debug logging for large manifests
-  if (manifestData.compressed.length > 1000000) { // > 1MB
-    console.log(`Large manifest detected: ${manifestData.compressed.length.toLocaleString()} bytes compressed, ${manifestData.originalSize.toLocaleString()} bytes original`);
+  if (size > 1000000) { // > 1MB
+    console.log(`Large manifest detected: ${size.toLocaleString()} bytes${isCompressed ? ' compressed' : ''}, ${manifestData.originalSize.toLocaleString()} bytes original`);
   }
 
   return {
@@ -462,10 +503,10 @@ function createManifestResource(manifestData: { compressed: Buffer; originalSize
       group: STANDARD_MANIFEST_GROUP,
       instance: STANDARD_MANIFEST_INSTANCE,
     },
-    rawData: manifestData.compressed,
+    rawData,
     offset: manifestOffset,
     originalOffset: manifestOffset,
-    size: manifestData.compressed.length,
+    size,
     uncompressedSize: manifestData.originalSize,
     compressionFlags: isCompressed ? 0x5A42 : 0, // Zlib compression or uncompressed
     sizeField,

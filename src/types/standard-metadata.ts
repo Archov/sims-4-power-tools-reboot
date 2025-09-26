@@ -38,7 +38,7 @@ export interface MutableStandardMergedFolder {
   /** Folder name/path component. */
   name: string;
   /** Subfolders in this folder. */
-  folders: StandardMergedFolder[];
+  folders: MutableStandardMergedFolder[];
   /** Packages in this folder. */
   packages: StandardMergedPackage[];
 }
@@ -75,7 +75,7 @@ export class StandardMetadataUtils {
   static enumeratePackages(manifest: StandardMergeManifest): StandardMergedPackage[] {
     const packages: StandardMergedPackage[] = [];
 
-    function traverseFolder(folder: StandardMergedFolder): void {
+    const traverseFolder = (folder: StandardMergedFolder): void => {
       // Add packages from this folder
       packages.push(...folder.packages);
 
@@ -83,7 +83,7 @@ export class StandardMetadataUtils {
       for (const subfolder of folder.folders) {
         traverseFolder(subfolder);
       }
-    }
+    };
 
     traverseFolder(manifest.root);
     return packages;
@@ -96,7 +96,11 @@ export class StandardMetadataUtils {
     const packages = StandardMetadataUtils.enumeratePackages(manifest);
 
     for (const pkg of packages) {
-      if (pkg.resources.some(r => r.type === tgi.type && r.group === tgi.group && r.instance === tgi.instance)) {
+      if (pkg.resources.some(r =>
+        r.type === tgi.type &&
+        r.group === tgi.group &&
+        String(r.instance) === String(tgi.instance)
+      )) {
         return pkg;
       }
     }
